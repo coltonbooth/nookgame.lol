@@ -222,6 +222,33 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* The shareable result, shown rather than described. Selectable on purpose —
+   the page sets user-select: none globally, and a "copy this" message about
+   text you cannot select is worse than no message. */
+.share-result {
+  margin: 4px 0 2px;
+  padding: 12px 16px;
+  max-width: min(92vw, 420px);
+  border-radius: 8px;
+  background: rgb(0 0 0 / 0.3);
+  border: 1px solid rgb(200 162 74 / 0.25);
+  color: var(--ivory);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 15px;
+  line-height: 1.7;
+  text-align: center;
+  white-space: pre-wrap;
+  word-break: break-word;
+
+  -webkit-user-select: text;
+  user-select: text;
+  cursor: text;
+}
+
+.share-result[hidden] {
+  display: none;
+}
+
 .panel-actions {
   display: flex;
   gap: 10px;
@@ -239,7 +266,8 @@ body {
   display: none;
 }
 
-#next-level[hidden] {
+#next-level[hidden],
+#copy[hidden] {
   display: none;
 }
 
@@ -251,6 +279,7 @@ body {
 
 #restart,
 #next-level,
+#copy,
 #share {
   padding: 10px 26px;
   font: inherit;
@@ -263,11 +292,13 @@ body {
 }
 
 #restart:hover,
+#copy:hover,
 #share:hover {
   background: rgb(200 162 74 / 0.1);
 }
 
-#share {
+#share,
+#copy {
   border-color: var(--brass);
   color: var(--brass);
 }

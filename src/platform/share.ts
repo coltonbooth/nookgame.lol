@@ -71,34 +71,55 @@ export function shareText(result: ShareResult): string {
   return lines.join('\n');
 }
 
-export interface ShareOutcome {
-  readonly ok: boolean;
-  /** True when it went to the clipboard rather than a share sheet. */
-  readonly copied: boolean;
+/** Is there an OS share sheet worth offering? Mostly phones. */
+export const canShareSheet = (): boolean =>
+  typeof navigator !== 'undefined' && typeof navigator.share === 'function';
+
+/**
+ * Open the OS share sheet. Separate from copying on purpose: awaiting
+ * `navigator.share` and *then* falling back to the clipboard doesn't work,
+ * because the await spends the transient user activation and the clipboard
+ * call is refused. Two buttons, two independent paths, each called straight
+ * from its own gesture.
+ */
+export async function openShareSheet(text: string): Promise<boolean> {
+  if (!canShareSheet()) return false;
+  try {
+    await navigator.share({ text });
+    return true;
+  } catch {
+    // Includes the user simply dismissing the sheet.
+    return false;
+  }
 }
 
 /**
- * Hand the text to the OS share sheet where there is one, otherwise the
- * clipboard. Both need to be called straight from a user gesture or the
- * browser refuses.
+ * Copy to the clipboard. The async clipboard call is the *first* thing that
+ * happens, so the gesture is still live; the textarea path covers browsers
+ * that refuse it outright.
  */
-export async function shareOrCopy(text: string): Promise<ShareOutcome> {
-  if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
-    try {
-      await navigator.share({ text });
-      return { ok: true, copied: false };
-    } catch (error) {
-      // A user dismissing the sheet lands here too — not worth a fallback.
-      if (error instanceof DOMException && error.name === 'AbortError') {
-        return { ok: false, copied: false };
-      }
-    }
-  }
-
+export async function copyToClipboard(text: string): Promise<boolean> {
   try {
     await navigator.clipboard.writeText(text);
-    return { ok: true, copied: true };
+    return true;
   } catch {
-    return { ok: false, copied: false };
+    return legacyCopy(text);
+  }
+}
+
+function legacyCopy(text: string): boolean {
+  try {
+    const area = document.createElement('textarea');
+    area.value = text;
+    area.setAttribute('readonly', '');
+    area.style.position = 'fixed';
+    area.style.opacity = '0';
+    document.body.append(area);
+    area.select();
+    const ok = document.execCommand('copy');
+    area.remove();
+    return ok;
+  } catch {
+    return false;
   }
 }

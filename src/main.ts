@@ -27,7 +27,12 @@ import {
   type Level,
 } from './core/levels';
 import { dateKey, dayNumber, todaySeed } from './platform/daily';
-import { shareOrCopy, shareText } from './platform/share';
+import {
+  canShareSheet,
+  copyToClipboard,
+  openShareSheet,
+  shareText,
+} from './platform/share';
 import {
   loadDailyBest,
   loadLevelsCleared,
@@ -48,6 +53,7 @@ const hud = new Hud();
 const panel = new EndPanel({
   onRestart: restart,
   onShare: share,
+  onCopy: copyResult,
   onNextLevel: advanceLevel,
 });
 const tabs = new ModeTabs(setMode);
@@ -230,7 +236,9 @@ function end(): void {
       score: state.score,
       best,
       bestLabel: mode === 'levels' ? 'levels cleared' : 'best',
-      canShare: mode === 'daily',
+      ...(mode === 'daily'
+        ? { result: resultText(), canShareSheet: canShareSheet() }
+        : {}),
       canAdvance: false,
       restartLabel: mode === 'levels' ? 'try again' : 'again',
     });
@@ -287,7 +295,6 @@ function winLevel(): void {
       score: state.score,
       best: cleared,
       bestLabel: 'levels cleared',
-      canShare: false,
       canAdvance: true,
       restartLabel: 'replay',
     });
@@ -315,19 +322,25 @@ function captionFor(): string {
   return `today's nook #${dayNumber()}${suffix}`;
 }
 
-async function share(): Promise<void> {
-  const text = shareText({
+/** The shareable result for the run just finished. */
+function resultText(): string {
+  return shareText({
     day: dayNumber(),
     score: state.score,
     stats: state.stats,
   });
+}
 
-  const outcome = await shareOrCopy(text);
-  if (!outcome.ok) {
-    panel.says('could not share. select and copy instead.');
-    return;
-  }
-  panel.says(outcome.copied ? 'copied.' : 'shared.');
+async function share(): Promise<void> {
+  const ok = await openShareSheet(resultText());
+  // A dismissed share sheet lands here too, so stay quiet rather than claim
+  // something went wrong. The text is on screen either way.
+  if (ok) panel.says('shared.');
+}
+
+async function copyResult(): Promise<void> {
+  const ok = await copyToClipboard(resultText());
+  panel.says(ok ? 'copied.' : 'select the text above and copy it.');
 }
 
 function restart(): void {

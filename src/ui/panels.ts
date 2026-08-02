@@ -10,6 +10,7 @@ export type Mode = 'endless' | 'daily' | 'levels';
 export interface PanelHandlers {
   onRestart(): void;
   onShare(): void;
+  onCopy(): void;
   onNextLevel(): void;
 }
 
@@ -19,9 +20,12 @@ export interface PanelView {
   readonly score: number;
   readonly best: number;
   readonly bestLabel: string;
-  readonly canShare: boolean;
   readonly canAdvance: boolean;
   readonly restartLabel: string;
+  /** The shareable result, shown verbatim so it can always be copied by hand. */
+  readonly result?: string;
+  /** Whether an OS share sheet is worth offering alongside copy. */
+  readonly canShareSheet?: boolean;
 }
 
 export class EndPanel {
@@ -32,7 +36,9 @@ export class EndPanel {
   private readonly bestLabel: HTMLElement;
   private readonly bestRow: HTMLElement;
   private readonly share: HTMLButtonElement;
+  private readonly copy: HTMLButtonElement;
   private readonly next: HTMLButtonElement;
+  private readonly result: HTMLElement;
   private readonly restart: HTMLButtonElement;
   private readonly note: HTMLElement;
 
@@ -45,11 +51,14 @@ export class EndPanel {
     this.bestRow = must(root, '.panel-best');
     this.note = must(root, '#share-note');
     this.share = must(root, '#share') as HTMLButtonElement;
+    this.copy = must(root, '#copy') as HTMLButtonElement;
     this.next = must(root, '#next-level') as HTMLButtonElement;
     this.restart = must(root, '#restart') as HTMLButtonElement;
+    this.result = must(root, '#share-result');
 
     this.restart.addEventListener('click', handlers.onRestart);
     this.share.addEventListener('click', handlers.onShare);
+    this.copy.addEventListener('click', handlers.onCopy);
     this.next.addEventListener('click', handlers.onNextLevel);
   }
 
@@ -59,7 +68,13 @@ export class EndPanel {
     this.best.textContent = view.best.toLocaleString('en-US');
     this.bestLabel.textContent = view.bestLabel;
     this.bestRow.hidden = view.best <= 0;
-    this.share.hidden = !view.canShare;
+
+    const result = view.result ?? '';
+    this.result.textContent = result;
+    this.result.hidden = result.length === 0;
+    this.copy.hidden = result.length === 0;
+    this.share.hidden = result.length === 0 || view.canShareSheet !== true;
+
     this.next.hidden = !view.canAdvance;
     this.restart.textContent = view.restartLabel;
     this.note.textContent = '';

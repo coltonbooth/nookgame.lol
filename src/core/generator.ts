@@ -21,6 +21,8 @@ import {
   occupancy,
   place,
   countPlacements,
+  idx,
+  CELLS,
   N,
   type Board,
 } from './board';
@@ -73,6 +75,8 @@ function lineValue(completes: number): number {
 const DEAD_PENALTY = 0.04;
 /** How much a shape repeated across the last two deals is damped. Not zero. */
 const REPEAT_PENALTY = 0.3;
+/** A generated daily layout must leave the board at least this open. */
+const LAYOUT_MIN_OPENNESS = 0.32;
 
 /** How many hands to try before falling back to the best one seen. */
 const MAX_ATTEMPTS = 16;
@@ -247,6 +251,66 @@ export function analyseBoard(board: Board): BoardFit {
   }
 
   return { fits, completes, primes, snugness };
+}
+
+/**
+ * A starting layout for Today's Nook, built from the day's seed.
+ *
+ * Rather than scattering cells at random — which reads as damage, not design —
+ * this lays down whole catalogue pieces. Everything on the board is a shape
+ * the game could have dealt you, so the gaps between them are the same kind of
+ * gaps you make yourself, and each day opens on a board with its own character.
+ *
+ * Never completes a line (that would clear on the first placement and hand out
+ * free points) and never fills so much that the run starts in trouble.
+ */
+export function generateLayout(
+  rngState: RngState,
+  targetCells: number,
+): { board: Board; colors: Uint8Array; rngState: RngState } {
+  let board = 0n;
+  const colors = new Uint8Array(CELLS);
+  let rng = rngState;
+  let placed = 0;
+
+  // Medium shapes read as deliberate; a board of 1x1s reads as static.
+  const candidates = PIECES.filter((p) => p.size >= 2 && p.size <= 5);
+  const weights = candidates.map((p) => p.weight);
+
+  for (let attempt = 0; attempt < 60 && placed < targetCells; attempt++) {
+    const [pick, afterPick] = weightedPick(rng, weights);
+    rng = afterPick;
+    const piece = candidates[pick]!;
+    if (placed + piece.size > targetCells) continue;
+
+    const spots = PLACEMENTS[piece.id]!.filter((pl) => (board & pl.mask) === 0n);
+    if (spots.length === 0) continue;
+
+    const [spot, afterSpot] = nextInt(rng, spots.length);
+    rng = afterSpot;
+    const chosen = spots[spot]!;
+
+    // A pre-filled line would clear the instant play started.
+    const next = board | chosen.mask;
+    const lines = fullLines(next);
+    if (lines.rows.length > 0 || lines.cols.length > 0) continue;
+
+    // Scattering pieces can fragment a board far more than the cell count
+    // suggests. Everyone gets the same daily, so a cramped opening is cramped
+    // for everybody — refuse any placement that boxes the board in.
+    if (boardOpenness(next) < LAYOUT_MIN_OPENNESS) continue;
+
+    const [color, afterColor] = nextInt(rng, 4);
+    rng = afterColor;
+
+    board = next;
+    for (const [dx, dy] of piece.cells) {
+      colors[idx(chosen.x + dx, chosen.y + dy)] = color + 1;
+    }
+    placed += piece.size;
+  }
+
+  return { board, colors, rngState: rng };
 }
 
 /** Place, then clear any completed lines. The board a player would end up with. */

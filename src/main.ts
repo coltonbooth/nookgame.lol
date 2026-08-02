@@ -194,12 +194,16 @@ function endProgress(now: number): number {
   return Math.min(1, (now - endingStart) / ENDING_MS);
 }
 
+/** Cells the daily layout starts with. Enough to give the day a shape. */
+const DAILY_LAYOUT_CELLS = 14;
+
 function newGame(): GameState {
   // Today's Nook is a pure function of the date — no backend, no sync, and
-  // everyone who starts today starts from the same stream.
-  const seed =
-    mode === 'daily' ? todaySeed() : (Math.random() * 0xffffffff) >>> 0;
-  return createGame({ seed });
+  // everyone who starts today starts from the same board and the same stream.
+  if (mode === 'daily') {
+    return createGame({ seed: todaySeed(), layoutCells: DAILY_LAYOUT_CELLS });
+  }
+  return createGame({ seed: (Math.random() * 0xffffffff) >>> 0 });
 }
 
 function setMode(next: Mode): void {

@@ -22,7 +22,7 @@ import {
   type Board,
   type FullLines,
 } from './board';
-import { dealThree } from './generator';
+import { dealThree, generateLayout } from './generator';
 import { COLOR_COUNT, piece, type PieceId } from './pieces';
 import { nextInt, type RngState } from './rng';
 import { scoreTurn, type TurnScore } from './scoring';
@@ -155,13 +155,23 @@ export type Action =
 export interface NewGameOptions {
   readonly seed: RngState;
   readonly fairDeal?: boolean;
+  /**
+   * Cells to pre-fill with a generated starting layout. Today's Nook uses this
+   * so each day opens on a board with its own shape; endless starts empty.
+   */
+  readonly layoutCells?: number;
 }
 
 export function createGame(options: NewGameOptions): GameState {
+  const seed = options.seed >>> 0;
+  const layout = options.layoutCells
+    ? generateLayout(seed, options.layoutCells)
+    : null;
+
   const base: GameState = {
-    board: EMPTY_BOARD,
+    board: layout?.board ?? EMPTY_BOARD,
     stats: EMPTY_STATS,
-    colors: new Uint8Array(CELLS),
+    colors: layout?.colors ?? new Uint8Array(CELLS),
     markers: EMPTY_BOARD,
     tray: [null, null, null],
     nook: null,
@@ -170,7 +180,8 @@ export function createGame(options: NewGameOptions): GameState {
     score: 0,
     run: 0,
     status: 'playing',
-    rngState: options.seed >>> 0,
+    // The layout consumes part of the stream, so deals carry on from there.
+    rngState: layout?.rngState ?? seed,
     dealCount: 0,
     recentShapes: [],
     fairDeal: options.fairDeal ?? false,

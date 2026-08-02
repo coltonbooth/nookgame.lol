@@ -51,6 +51,34 @@ sealed.
 | `Enter` / `Space` | place |
 | `Esc` | put it back |
 
+## Today's Nook
+
+A second mode, seeded by the local calendar date — no backend, no sync. Each day
+opens on a **generated layout**: whole catalogue pieces laid down from the day's
+seed, so the board has its own character and the gaps read as designed rather
+than as damage. A layout never starts with a line complete and never leaves the
+board cramped (`LAYOUT_MIN_OPENNESS`).
+
+Your best for the day is kept per date; replaying is allowed, since locking
+someone out of a puzzle is the same species of idea as the lives and energy
+systems `plan.md` rules out.
+
+The share result is spoiler-free — one square per deal, coloured by that deal's
+best clear:
+
+```
+Nook #204 — 12,480
+🟦🟦🟪 ⬛🟦🟨 🟪🟪🟪 🟦⬛
+longest run ×4.5 · swept clean twice · 21 lines
+```
+
+**One honest limit:** the generator reads the board, so two players who play
+*differently* diverge after the first few placements. What's shared is the
+starting board and the RNG stream — play the same moves and you get the same
+game, which the replay-determinism test guarantees. Making the sequence
+literally identical would mean dropping the guaranteed-fit and solvability
+layers, which is a much worse trade.
+
 ## How the generator picks pieces
 
 Five layers, in `src/core/generator.ts`. The interesting one is layer 4.
@@ -66,9 +94,35 @@ It deliberately does *not* hand out small pieces when you're cornered. That's
 the obvious move and it's wrong: short pieces can't finish lines, so the board
 keeps filling and the run dies anyway, slowly, on a diet of dominoes.
 
-Tuning dials, all at the top of the file: `SIZE_PULL`, `LINE_PULL`,
-`SNUG_PULL`, `DEAD_PENALTY`, and `MERCY_SPAN` (how fast assistance decays as
-your score climbs). `Fair Deal` bypasses the whole layer.
+It also rewards pieces that bring lines to the *brink* without finishing them
+(`primes`), because a combination can only happen if several lines arrive one
+cell from done together — and nothing else in the weighting rewards getting
+them there.
+
+Tuning dials, all at the top of the file: `SIZE_PULL`, `SINGLE_LINE_PULL`,
+`MULTI_LINE_PULL`, `PRIME_PULL`, `SNUG_PULL`, `DEAD_PENALTY`, and `MERCY_SPAN`
+(how fast assistance decays as your score climbs). `Fair Deal` bypasses the
+whole layer.
+
+## Two deliberate departures from plan.md
+
+**The run decays instead of resetting** (§1 specifies a reset to zero). The
+reset made big combinations strictly irrational: one line a turn for five turns
+pays 10+15+20+25+30 = 100, while spending three turns arranging a triple wiped
+the run and paid 60. The scoring was telling players to take the drip, and they
+could feel it.
+
+**Praise words on a clear** (§0 asks for "lowercase, gentle, never
+exclamatory"). Kept lowercase as a compromise; `PRAISE` in
+`src/render/effects.ts` is the one place to change it.
+
+## Bots
+
+`src/core/bot.ts` has two. The random one drives the determinism property test
+and the generator fuzz. The **greedy** one exists because random play is blind
+to anything requiring a *choice* of placement — measuring combo rates with a
+coin-flipper only proves a coin-flipper can't find combos. Neither is close to a
+good human; read their numbers as floors.
 
 ## Feel
 

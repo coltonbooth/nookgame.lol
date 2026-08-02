@@ -4,6 +4,8 @@ import {
   boardFromRows,
   canPlaceAt,
   fitsAnywhere,
+  fullLines,
+  popcount,
   type Board,
 } from './board';
 import { legalMoves, playOut } from './bot';
@@ -12,6 +14,7 @@ import { createGame, reducer, type GameState } from './game';
 import {
   MERCY_FLOOR,
   analyseBoard,
+  generateLayout,
   repeatedShapes,
   boardOpenness,
   dealThree,
@@ -309,6 +312,48 @@ describe('solvability search', () => {
       state = advanceOneDeal(state);
       if (state.status === 'over') state = createGame({ seed: i + 900 });
     }
+  });
+});
+
+describe('generated layouts', () => {
+  it('is a pure function of the seed', () => {
+    const a = generateLayout(1234, 14);
+    const b = generateLayout(1234, 14);
+    expect(a.board).toBe(b.board);
+    expect(generateLayout(1235, 14).board).not.toBe(a.board);
+  });
+
+  it('never starts with a line already complete', () => {
+    for (let seed = 0; seed < 400; seed++) {
+      const { board } = generateLayout(seed, 14);
+      expect(fullLines(board)).toEqual({ rows: [], cols: [] });
+    }
+  });
+
+  it('fills roughly the requested amount and leaves plenty of room', () => {
+    for (let seed = 0; seed < 200; seed++) {
+      const { board } = generateLayout(seed, 14);
+      const filled = popcount(board);
+      expect(filled).toBeGreaterThan(4);
+      expect(filled).toBeLessThanOrEqual(14);
+      // Still a comfortable board to open on, for every single day.
+      expect(boardOpenness(board)).toBeGreaterThanOrEqual(0.32);
+    }
+  });
+
+  it('colours every filled cell and nothing else', () => {
+    for (let seed = 0; seed < 100; seed++) {
+      const { board, colors } = generateLayout(seed, 14);
+      for (let cell = 0; cell < 64; cell++) {
+        const filled = (board & (1n << BigInt(cell))) !== 0n;
+        expect(colors[cell]! > 0).toBe(filled);
+      }
+    }
+  });
+
+  it('gives a daily game a board to open on, and endless an empty one', () => {
+    expect(createGame({ seed: 99, layoutCells: 14 }).board).not.toBe(EMPTY_BOARD);
+    expect(createGame({ seed: 99 }).board).toBe(EMPTY_BOARD);
   });
 });
 

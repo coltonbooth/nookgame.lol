@@ -1,34 +1,67 @@
-// The end-of-run panel and the mode switch. Copy stays lowercase and
-// unbothered — the category is uniformly shouty, and being calm is free
-// differentiation.
+// The end-of-run panel, the mode switch and the level goal chips. Copy stays
+// lowercase and unbothered — the category is uniformly shouty, and being calm
+// is free differentiation.
 
-export type Mode = 'endless' | 'daily';
+import type { GameState } from '../core/game';
+import { goalMet, shortGoal, type Level } from '../core/levels';
+
+export type Mode = 'endless' | 'daily' | 'levels';
+
+export interface PanelHandlers {
+  onRestart(): void;
+  onShare(): void;
+  onNextLevel(): void;
+}
+
+/** What to show when a run stops. */
+export interface PanelView {
+  readonly title: string;
+  readonly score: number;
+  readonly best: number;
+  readonly bestLabel: string;
+  readonly canShare: boolean;
+  readonly canAdvance: boolean;
+  readonly restartLabel: string;
+}
 
 export class EndPanel {
   private readonly panel: HTMLElement;
+  private readonly title: HTMLElement;
   private readonly score: HTMLElement;
   private readonly best: HTMLElement;
+  private readonly bestLabel: HTMLElement;
+  private readonly bestRow: HTMLElement;
   private readonly share: HTMLButtonElement;
+  private readonly next: HTMLButtonElement;
+  private readonly restart: HTMLButtonElement;
   private readonly note: HTMLElement;
 
-  constructor(
-    handlers: { onRestart(): void; onShare(): void },
-    root: ParentNode = document,
-  ) {
+  constructor(handlers: PanelHandlers, root: ParentNode = document) {
     this.panel = must(root, '#panel');
+    this.title = must(root, '.panel-title');
     this.score = must(root, '#panel-score');
     this.best = must(root, '#panel-best');
+    this.bestLabel = must(root, '#panel-best-label');
+    this.bestRow = must(root, '.panel-best');
     this.note = must(root, '#share-note');
     this.share = must(root, '#share') as HTMLButtonElement;
+    this.next = must(root, '#next-level') as HTMLButtonElement;
+    this.restart = must(root, '#restart') as HTMLButtonElement;
 
-    must(root, '#restart').addEventListener('click', handlers.onRestart);
+    this.restart.addEventListener('click', handlers.onRestart);
     this.share.addEventListener('click', handlers.onShare);
+    this.next.addEventListener('click', handlers.onNextLevel);
   }
 
-  show(score: number, best: number, canShare: boolean): void {
-    this.score.textContent = score.toLocaleString('en-US');
-    this.best.textContent = best.toLocaleString('en-US');
-    this.share.hidden = !canShare;
+  show(view: PanelView): void {
+    this.title.textContent = view.title;
+    this.score.textContent = view.score.toLocaleString('en-US');
+    this.best.textContent = view.best.toLocaleString('en-US');
+    this.bestLabel.textContent = view.bestLabel;
+    this.bestRow.hidden = view.best <= 0;
+    this.share.hidden = !view.canShare;
+    this.next.hidden = !view.canAdvance;
+    this.restart.textContent = view.restartLabel;
     this.note.textContent = '';
     this.panel.hidden = false;
   }
@@ -43,7 +76,7 @@ export class EndPanel {
   }
 }
 
-/** Two tabs. Endless is the default; today is the reason to come back. */
+/** Three tabs. Endless is the default; today is the reason to come back. */
 export class ModeTabs {
   private readonly buttons: Record<Mode, HTMLButtonElement>;
   private readonly label: HTMLElement;
@@ -52,6 +85,7 @@ export class ModeTabs {
     this.buttons = {
       endless: must(root, '#mode-endless') as HTMLButtonElement,
       daily: must(root, '#mode-daily') as HTMLButtonElement,
+      levels: must(root, '#mode-levels') as HTMLButtonElement,
     };
     this.label = must(root, '#daily-label');
 
@@ -60,22 +94,53 @@ export class ModeTabs {
     });
   }
 
-  set(mode: Mode, dayNumber: number, todaysBest = 0): void {
+  set(mode: Mode, caption: string): void {
     (Object.keys(this.buttons) as Mode[]).forEach((key) => {
       const on = key === mode;
       this.buttons[key].classList.toggle('is-on', on);
       this.buttons[key].setAttribute('aria-pressed', String(on));
     });
 
-    this.label.hidden = mode !== 'daily';
-    if (mode !== 'daily') {
-      this.label.textContent = '';
-      return;
-    }
+    this.label.hidden = caption.length === 0;
+    this.label.textContent = caption;
+  }
+}
 
-    const best =
-      todaysBest > 0 ? ` · best ${todaysBest.toLocaleString('en-US')}` : '';
-    this.label.textContent = `today's nook #${dayNumber}${best}`;
+/** The level's objectives, ticking over as they're met. */
+export class GoalChips {
+  private readonly root: HTMLElement;
+  private rendered = '';
+
+  constructor(root: ParentNode = document) {
+    this.root = must(root, '#goals');
+  }
+
+  hide(): void {
+    this.root.hidden = true;
+    this.root.replaceChildren();
+    this.rendered = '';
+  }
+
+  render(level: Level, state: GameState): void {
+    const chips = level.goals.map((goal) => ({
+      text: shortGoal(goal, state),
+      met: goalMet(goal, state),
+    }));
+
+    // Rebuilding the DOM every frame would thrash; only touch it on a change.
+    const key = chips.map((c) => `${c.text}${c.met ? '!' : ''}`).join('|');
+    if (key === this.rendered) return;
+    this.rendered = key;
+
+    this.root.hidden = false;
+    this.root.replaceChildren(
+      ...chips.map((chip) => {
+        const el = document.createElement('span');
+        el.className = chip.met ? 'goal is-met' : 'goal';
+        el.textContent = chip.text;
+        return el;
+      }),
+    );
   }
 }
 

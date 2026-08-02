@@ -45,35 +45,47 @@ const rect = (w: number, h: number): Array<readonly [number, number]> => {
   return cells;
 };
 
-// Weights: high 10, medium 5, low 2. The 1×1 gets 4 so it lands near 2% of
-// draws across the whole catalogue — a get-out-of-jail card, not a crutch.
+// Weights are the primary difficulty dial, and they are also what makes the
+// game feel generous or stingy. Skewed toward chunky pieces on purpose: a bag
+// full of dominoes and triominoes feels like scraps, and small pieces cannot
+// fill a row fast enough to keep lines clearing.
 const SPECS: Spec[] = [
-  { name: '1x1', family: 'single', cells: rect(1, 1), weight: 4 },
+  // A get-out-of-jail card, not a crutch.
+  { name: '1x1', family: 'single', cells: rect(1, 1), weight: 2 },
 
-  { name: '2x1', family: 'domino', cells: rect(2, 1), weight: 10 },
-  { name: '1x2', family: 'domino', cells: rect(1, 2), weight: 10 },
+  { name: '2x1', family: 'domino', cells: rect(2, 1), weight: 5 },
+  { name: '1x2', family: 'domino', cells: rect(1, 2), weight: 5 },
 
-  { name: '3x1', family: 'line3', cells: rect(3, 1), weight: 10 },
-  { name: '1x3', family: 'line3', cells: rect(1, 3), weight: 10 },
+  { name: '3x1', family: 'line3', cells: rect(3, 1), weight: 9 },
+  { name: '1x3', family: 'line3', cells: rect(1, 3), weight: 9 },
 
-  { name: '4x1', family: 'line4', cells: rect(4, 1), weight: 5 },
-  { name: '1x4', family: 'line4', cells: rect(1, 4), weight: 5 },
+  { name: '4x1', family: 'line4', cells: rect(4, 1), weight: 8 },
+  { name: '1x4', family: 'line4', cells: rect(1, 4), weight: 8 },
 
-  { name: '5x1', family: 'line5', cells: rect(5, 1), weight: 2 },
-  { name: '1x5', family: 'line5', cells: rect(1, 5), weight: 2 },
+  // Half a row in one piece — the workhorse of a big clear.
+  { name: '5x1', family: 'line5', cells: rect(5, 1), weight: 7 },
+  { name: '1x5', family: 'line5', cells: rect(1, 5), weight: 7 },
 
   { name: '2x2', family: 'square', cells: rect(2, 2), weight: 10 },
 
-  { name: '3x2', family: 'rect', cells: rect(3, 2), weight: 5 },
-  { name: '2x3', family: 'rect', cells: rect(2, 3), weight: 5 },
+  { name: '3x2', family: 'rect', cells: rect(3, 2), weight: 10 },
+  { name: '2x3', family: 'rect', cells: rect(2, 3), weight: 10 },
 
-  { name: '3x3', family: 'bigsquare', cells: rect(3, 3), weight: 2 },
+  { name: '4x2', family: 'rect', cells: rect(4, 2), weight: 5 },
+  { name: '2x4', family: 'rect', cells: rect(2, 4), weight: 5 },
+
+  { name: '3x3', family: 'bigsquare', cells: rect(3, 3), weight: 5 },
+
+  // The heavyweights. Rare, but they exist, and landing one is an event.
+  { name: '4x3', family: 'bigsquare', cells: rect(4, 3), weight: 2 },
+  { name: '3x4', family: 'bigsquare', cells: rect(3, 4), weight: 2 },
+  { name: '4x4', family: 'bigsquare', cells: rect(4, 4), weight: 2 },
 
   // L-triomino — 2×2 minus one cell, all four corners.
-  { name: 'L3-a', family: 'ltri', cells: [[0, 0], [1, 0], [0, 1]], weight: 10 },
-  { name: 'L3-b', family: 'ltri', cells: [[0, 0], [1, 0], [1, 1]], weight: 10 },
-  { name: 'L3-c', family: 'ltri', cells: [[0, 0], [0, 1], [1, 1]], weight: 10 },
-  { name: 'L3-d', family: 'ltri', cells: [[1, 0], [0, 1], [1, 1]], weight: 10 },
+  { name: 'L3-a', family: 'ltri', cells: [[0, 0], [1, 0], [0, 1]], weight: 6 },
+  { name: 'L3-b', family: 'ltri', cells: [[0, 0], [1, 0], [1, 1]], weight: 6 },
+  { name: 'L3-c', family: 'ltri', cells: [[0, 0], [0, 1], [1, 1]], weight: 6 },
+  { name: 'L3-d', family: 'ltri', cells: [[1, 0], [0, 1], [1, 1]], weight: 6 },
 
   // L tetromino, four rotations.
   { name: 'L-0', family: 'ltet', cells: [[0, 0], [0, 1], [0, 2], [1, 2]], weight: 5 },
@@ -88,10 +100,10 @@ const SPECS: Spec[] = [
   { name: 'J-3', family: 'ltet', cells: [[0, 0], [1, 0], [2, 0], [2, 1]], weight: 5 },
 
   // S / Z, two distinct rotations each.
-  { name: 'S-0', family: 'stet', cells: [[1, 0], [2, 0], [0, 1], [1, 1]], weight: 5 },
-  { name: 'S-1', family: 'stet', cells: [[0, 0], [0, 1], [1, 1], [1, 2]], weight: 5 },
-  { name: 'Z-0', family: 'stet', cells: [[0, 0], [1, 0], [1, 1], [2, 1]], weight: 5 },
-  { name: 'Z-1', family: 'stet', cells: [[1, 0], [0, 1], [1, 1], [0, 2]], weight: 5 },
+  { name: 'S-0', family: 'stet', cells: [[1, 0], [2, 0], [0, 1], [1, 1]], weight: 4 },
+  { name: 'S-1', family: 'stet', cells: [[0, 0], [0, 1], [1, 1], [1, 2]], weight: 4 },
+  { name: 'Z-0', family: 'stet', cells: [[0, 0], [1, 0], [1, 1], [2, 1]], weight: 4 },
+  { name: 'Z-1', family: 'stet', cells: [[1, 0], [0, 1], [1, 1], [0, 2]], weight: 4 },
 
   // T tetromino, four rotations.
   { name: 'T-0', family: 'ttet', cells: [[0, 0], [1, 0], [2, 0], [1, 1]], weight: 5 },
@@ -100,10 +112,10 @@ const SPECS: Spec[] = [
   { name: 'T-3', family: 'ttet', cells: [[0, 0], [0, 1], [1, 1], [0, 2]], weight: 5 },
 
   // Big corner — two 3-cell arms sharing a cell, in a 3×3 box.
-  { name: 'C-0', family: 'corner', cells: [[0, 0], [0, 1], [0, 2], [1, 2], [2, 2]], weight: 2 },
-  { name: 'C-1', family: 'corner', cells: [[0, 0], [1, 0], [2, 0], [0, 1], [0, 2]], weight: 2 },
-  { name: 'C-2', family: 'corner', cells: [[0, 0], [1, 0], [2, 0], [2, 1], [2, 2]], weight: 2 },
-  { name: 'C-3', family: 'corner', cells: [[2, 0], [2, 1], [0, 2], [1, 2], [2, 2]], weight: 2 },
+  { name: 'C-0', family: 'corner', cells: [[0, 0], [0, 1], [0, 2], [1, 2], [2, 2]], weight: 6 },
+  { name: 'C-1', family: 'corner', cells: [[0, 0], [1, 0], [2, 0], [0, 1], [0, 2]], weight: 6 },
+  { name: 'C-2', family: 'corner', cells: [[0, 0], [1, 0], [2, 0], [2, 1], [2, 2]], weight: 6 },
+  { name: 'C-3', family: 'corner', cells: [[2, 0], [2, 1], [0, 2], [1, 2], [2, 2]], weight: 6 },
 ];
 
 export const PIECES: readonly Piece[] = SPECS.map((spec, id) => {

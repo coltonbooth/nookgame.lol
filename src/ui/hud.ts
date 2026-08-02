@@ -110,8 +110,12 @@ export function describePlacement(state: GameState): string {
     parts.push(`cleared ${cleared} ${cleared === 1 ? 'line' : 'lines'}.`);
   }
   if (event.unlockedNook) parts.push('gem cleared. the nook is yours.');
-  else if (event.markersCleared === 1) parts.push('star.');
-  else if (event.markersCleared > 1) parts.push(`${event.markersCleared} stars.`);
+  else {
+    if (event.gemsCleared === 1) parts.push('gem.');
+    else if (event.gemsCleared > 1) parts.push(`${event.gemsCleared} gems.`);
+    if (event.starsCleared === 1) parts.push('star.');
+    else if (event.starsCleared > 1) parts.push(`${event.starsCleared} stars.`);
+  }
   if (state.run > 1) parts.push(`run x${event.multiplier}.`);
   parts.push(`score ${state.score.toLocaleString('en-US')}.`);
   return parts.join(' ');

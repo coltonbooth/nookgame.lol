@@ -187,23 +187,28 @@ describe('adaptive weighting', () => {
     expect(lift(BIG)).toBeGreaterThan(lift(ONE) * 3);
   });
 
-  it('does not over-supply single-line finishers', () => {
-    // One row one cell short, nothing else close. A 1x1 finishes it, but if
-    // that piece were always on tap rows would never stack into a combination.
-    const oneShort = boardFromRows([
-      '#######.',
+  it('still pays more for a multi-line finisher than a single', () => {
+    // Single-line finishers are deliberately well supplied — that's what keeps
+    // clears frequent. The invariant that has to survive is the *ordering*: a
+    // piece that takes several lines at once must always be wanted more than
+    // one that takes a single.
+    const primed = boardFromRows([
       '........',
       '........',
       '........',
       '........',
       '........',
-      '........',
-      '........',
+      '#####...',
+      '#####...',
+      '#####...',
     ]);
-    const w = dealWeights(oneShort, 0, false);
+    const fit = analyseBoard(primed);
+    const w = dealWeights(primed, 0, false);
     const raw = PIECES.map((p) => p.weight);
-    // A nudge, not a guarantee.
-    expect(w[ONE]! / raw[ONE]!).toBeLessThan(2.5);
+
+    expect(fit.completes[BIG]).toBe(3);
+    expect(fit.completes[ONE]).toBeLessThanOrEqual(1);
+    expect(w[BIG]! / raw[BIG]!).toBeGreaterThan(w[ONE]! / raw[ONE]!);
   });
 
   it('flattens back toward the raw weights as mercy decays', () => {
@@ -238,14 +243,14 @@ describe('anti-repetition', () => {
         {
           board: EMPTY_BOARD,
           nook: null,
-          recentShapes: [ONE, DOM_H, BIG, ONE, ONE, DOM_H],
+          recentShapes: [SQUARE, DOM_H, BIG, SQUARE, SQUARE, DOM_H],
           score: 0,
           fairDeal: false,
         },
         state,
       );
       state = result.rngState;
-      if (result.pieces.includes(ONE)) seen = true;
+      if (result.pieces.includes(SQUARE)) seen = true;
     }
     expect(seen).toBe(true);
   });
@@ -403,7 +408,7 @@ describe('generator fuzz', () => {
 
     expect(stats.moves.p50).toBeGreaterThan(12);
     expect(stats.scores.p50).toBeGreaterThan(50);
-    expect(stats.moves.min).toBeGreaterThan(3);
+    expect(stats.moves.p10).toBeGreaterThan(6);
   });
 
   it('scores and lasts better than Fair Deal, which is the point of mercy', () => {

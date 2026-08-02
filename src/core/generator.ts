@@ -60,7 +60,7 @@ const SNUG_PULL = 0.9;
  * multi-line finishers means the piece that cashes three rows in at once shows
  * up when it has been earned.
  */
-const SINGLE_LINE_PULL = 0.5;
+const SINGLE_LINE_PULL = 2.2;
 const MULTI_LINE_PULL = 2.4;
 /** How hard to favour pieces that bring lines to the brink without finishing. */
 const PRIME_PULL = 0.6;

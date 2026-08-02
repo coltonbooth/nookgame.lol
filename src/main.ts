@@ -20,26 +20,44 @@ import {
   tapSweptClean,
   tapUnlock,
 } from './platform/haptics';
+import {
+  describeGoal,
+  levelComplete,
+  levelFor,
+  type Level,
+} from './core/levels';
 import { dateKey, dayNumber, todaySeed } from './platform/daily';
 import { shareOrCopy, shareText } from './platform/share';
 import {
   loadDailyBest,
+  loadLevelsCleared,
+  nextLevel,
   recordBest,
   recordDailyBest,
+  recordLevelCleared,
 } from './platform/storage';
 import { praiseFor } from './render/effects';
 import { Renderer } from './render/renderer';
 import { Hud, describePlacement } from './ui/hud';
-import { EndPanel, ModeTabs, type Mode } from './ui/panels';
+import { EndPanel, GoalChips, ModeTabs, type Mode } from './ui/panels';
 
 const canvas = must<HTMLCanvasElement>('#stage');
 
 const renderer = new Renderer(canvas);
 const hud = new Hud();
-const panel = new EndPanel({ onRestart: restart, onShare: share });
+const panel = new EndPanel({
+  onRestart: restart,
+  onShare: share,
+  onNextLevel: advanceLevel,
+});
 const tabs = new ModeTabs(setMode);
+const chips = new GoalChips();
 
 let mode: Mode = 'endless';
+/** Only meaningful in level mode. */
+let level: Level = levelFor(nextLevel());
+/** Set the moment the objectives are all met, so the win fires once. */
+let levelWon = false;
 let state = newGame();
 let dirty = true;
 
@@ -101,6 +119,11 @@ requestAnimationFrame(function frame(now) {
 // --- plumbing --------------------------------------------------------------
 
 function dispatch(action: Action): void {
+  // A won level is still technically playable — the board hasn't run out of
+  // room — so stop taking input rather than letting pieces land behind the
+  // panel.
+  if (levelWon) return;
+
   const before = state;
   state = reducer(state, action);
   if (state === before) return;
@@ -118,9 +141,24 @@ function dispatch(action: Action): void {
     soundStash();
   }
 
+  renderGoals();
+
+  // A level is won the moment every objective is met — check before the
+  // end-of-run check, so meeting the last goal with your last legal placement
+  // reads as a win rather than a loss.
+  if (mode === 'levels' && !levelWon && levelComplete(level, state)) {
+    winLevel();
+    return;
+  }
+
   if (state.status === 'over' && before.status === 'playing') {
     end();
   }
+}
+
+function renderGoals(): void {
+  if (mode === 'levels') chips.render(level, state);
+  else chips.hide();
 }
 
 /** The bit that makes a clear feel like something rather than just happening. */
@@ -182,10 +220,20 @@ function end(): void {
   const best =
     mode === 'daily'
       ? recordDailyBest(dateKey(), state.score)
-      : recordBest(state.score);
+      : mode === 'levels'
+        ? loadLevelsCleared()
+        : recordBest(state.score);
 
   window.setTimeout(() => {
-    panel.show(state.score, best, mode === 'daily');
+    panel.show({
+      title: 'nowhere left to put it',
+      score: state.score,
+      best,
+      bestLabel: mode === 'levels' ? 'levels cleared' : 'best',
+      canShare: mode === 'daily',
+      canAdvance: false,
+      restartLabel: mode === 'levels' ? 'try again' : 'again',
+    });
   }, ENDING_MS);
 }
 
@@ -203,18 +251,68 @@ function newGame(): GameState {
   if (mode === 'daily') {
     return createGame({ seed: todaySeed(), layoutCells: DAILY_LAYOUT_CELLS });
   }
+
+  if (mode === 'levels') {
+    levelWon = false;
+    // Levels hand over the Nook up front — it's the tool you need to plan
+    // around an objective — and deal both marker kinds so collect-goals work.
+    return createGame({
+      seed: level.seed,
+      layoutCells: level.layoutCells,
+      markerPolicy: 'mixed',
+      markerOneIn: level.markerOneIn,
+      nookUnlocked: true,
+    });
+  }
+
   return createGame({ seed: (Math.random() * 0xffffffff) >>> 0 });
+}
+
+function advanceLevel(): void {
+  level = levelFor(level.number + 1);
+  restart();
+}
+
+/** Objectives met — stop the run and offer the next one. */
+function winLevel(): void {
+  levelWon = true;
+  const cleared = recordLevelCleared(level.number);
+  soundSweptClean();
+  renderer.effects.say('level cleared', performance.now(), true);
+  hud.announce(`level ${level.number} cleared. score ${state.score}.`);
+
+  window.setTimeout(() => {
+    panel.show({
+      title: `level ${level.number} cleared`,
+      score: state.score,
+      best: cleared,
+      bestLabel: 'levels cleared',
+      canShare: false,
+      canAdvance: true,
+      restartLabel: 'replay',
+    });
+  }, 700);
 }
 
 function setMode(next: Mode): void {
   if (next === mode) return;
   mode = next;
+  // Resume the ladder wherever it was left.
+  if (mode === 'levels') level = levelFor(nextLevel());
   restart();
 }
 
-/** Keeps the tabs and the "today's nook #N · best" label in step. */
+/** Keeps the tabs and the caption under the score in step. */
 function refreshTabs(): void {
-  tabs.set(mode, dayNumber(), loadDailyBest(dateKey()));
+  tabs.set(mode, captionFor());
+}
+
+function captionFor(): string {
+  if (mode === 'levels') return `level ${level.number}`;
+  if (mode !== 'daily') return '';
+  const best = loadDailyBest(dateKey());
+  const suffix = best > 0 ? ` · best ${best.toLocaleString('en-US')}` : '';
+  return `today's nook #${dayNumber()}${suffix}`;
 }
 
 async function share(): Promise<void> {
@@ -242,7 +340,15 @@ function restart(): void {
   refreshTabs();
   hud.reset(state.score);
   hud.render(state);
-  hud.announce(mode === 'daily' ? `today's nook #${dayNumber()}.` : 'new run.');
+  renderGoals();
+
+  if (mode === 'levels') {
+    hud.announce(
+      `level ${level.number}. ${level.goals.map(describeGoal).join(', then ')}.`,
+    );
+  } else {
+    hud.announce(mode === 'daily' ? `today's nook #${dayNumber()}.` : 'new run.');
+  }
   dirty = true;
 }
 
@@ -254,3 +360,4 @@ function must<T extends Element>(selector: string): T {
 
 refreshTabs();
 hud.render(state);
+renderGoals();

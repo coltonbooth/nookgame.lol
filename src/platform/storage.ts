@@ -48,3 +48,16 @@ export const loadDailyBest = (date: string): number =>
   readNumber(dailyKey(date));
 export const recordDailyBest = (date: string, score: number): number =>
   recordUnder(dailyKey(date), score);
+
+// --- levels ----------------------------------------------------------------
+
+const LEVELS_KEY = 'nook.levels.cleared';
+
+/** Highest level cleared. 0 means none yet, so level 1 is next. */
+export const loadLevelsCleared = (): number => readNumber(LEVELS_KEY);
+
+/** The level to open on: one past the highest cleared. */
+export const nextLevel = (): number => loadLevelsCleared() + 1;
+
+export const recordLevelCleared = (level: number): number =>
+  recordUnder(LEVELS_KEY, level);

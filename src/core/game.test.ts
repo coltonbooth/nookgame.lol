@@ -3,11 +3,12 @@ import { CELLS, EMPTY_BOARD, bit, boardFromRows, popcount } from './board';
 import { endedFairly, playOut } from './bot';
 import {
   EMPTY_STATS,
+  MARKER_ONE_IN,
   NO_MARKER,
+  type MarkerKind,
   anyLegalMove,
   createGame,
   markerAt,
-  markerKind,
   preview,
   reducer,
   replay,
@@ -31,11 +32,12 @@ const DOM_H = byName('2x1');
 const DOM_V = byName('1x2');
 const BIG = byName('3x3');
 
-const slot = (piece: PieceId, color = 1, marker = NO_MARKER): Slot => ({
-  piece,
-  color,
-  marker,
-});
+const slot = (
+  piece: PieceId,
+  color = 1,
+  marker = NO_MARKER,
+  markerKind: MarkerKind = 'gem',
+): Slot => ({ piece, color, marker, markerKind });
 
 /** Skip the gem hunt when a test is about something else. */
 const unlocked = (state: GameState): GameState => ({
@@ -50,7 +52,10 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
     board: EMPTY_BOARD,
     stats: EMPTY_STATS,
     colors: new Uint8Array(CELLS),
-    markers: EMPTY_BOARD,
+    gems: EMPTY_BOARD,
+    stars: EMPTY_BOARD,
+    markerPolicy: 'progression',
+    markerOneIn: MARKER_ONE_IN,
     tray: [null, null, null],
     nook: null,
     nookUnlocked: true,
@@ -273,7 +278,7 @@ describe('gems and earning the Nook', () => {
   const nearlyFull = (gemColumn: number): GameState =>
     makeState({
       board: boardFromRows(['#######.', ...Array(7).fill('........')]),
-      markers: bit(gemColumn, 0),
+      gems: bit(gemColumn, 0),
       nookUnlocked: false,
       tray: [slot(ONE), slot(DOM_H), slot(DOM_H)],
     });
@@ -281,7 +286,8 @@ describe('gems and earning the Nook', () => {
   it('starts every run sealed, with no gems on the board', () => {
     const g = createGame({ seed: 4 });
     expect(g.nookUnlocked).toBe(false);
-    expect(g.markers).toBe(EMPTY_BOARD);
+    expect(g.gems).toBe(EMPTY_BOARD);
+    expect(g.stars).toBe(EMPTY_BOARD);
   });
 
   it('refuses to stash while sealed', () => {
@@ -300,8 +306,8 @@ describe('gems and earning the Nook', () => {
       tray: [slot(DOM_H, 1, 1), null, null],
     });
     const next = reducer(s, { type: 'place', source: 'tray', index: 0, x: 3, y: 4 });
-    expect(markerAt(next, 3, 4)).toBe(false);
-    expect(markerAt(next, 4, 4)).toBe(true);
+    expect(markerAt(next, 3, 4)).toBeNull();
+    expect(markerAt(next, 4, 4)).toBe('gem');
     expect(next.nookUnlocked).toBe(false);
   });
 
@@ -310,18 +316,18 @@ describe('gems and earning the Nook', () => {
     const next = reducer(s, { type: 'place', source: 'tray', index: 0, x: 7, y: 0 });
 
     expect(next.lastEvent?.clearedRows).toEqual([0]);
-    expect(next.lastEvent?.markersCleared).toBe(1);
+    expect(next.lastEvent?.gemsCleared).toBe(1);
     expect(next.lastEvent?.unlockedNook).toBe(true);
     expect(next.nookUnlocked).toBe(true);
     // Gems have done their job; none are left to confuse anyone.
-    expect(next.markers).toBe(EMPTY_BOARD);
+    expect(next.gems).toBe(EMPTY_BOARD);
   });
 
   it('stays sealed when the cleared line misses the gem', () => {
     // Gem parked on row 4, well clear of the row 0 that clears.
     const s = makeState({
       ...nearlyFull(2),
-      markers: bit(2, 4),
+      gems: bit(2, 4),
       board: boardFromRows([
         '#######.',
         '........',
@@ -336,9 +342,9 @@ describe('gems and earning the Nook', () => {
     const next = reducer(s, { type: 'place', source: 'tray', index: 0, x: 7, y: 0 });
 
     expect(next.lastEvent?.clearedRows).toEqual([0]);
-    expect(next.lastEvent?.markersCleared).toBe(0);
+    expect(next.lastEvent?.gemsCleared).toBe(0);
     expect(next.nookUnlocked).toBe(false);
-    expect(markerAt(next, 2, 4)).toBe(true); // still waiting
+    expect(markerAt(next, 2, 4)).toBe('gem'); // still waiting
   });
 
   it('lets the piece be stashed the moment it is unlocked', () => {
@@ -361,11 +367,14 @@ describe('gems and earning the Nook', () => {
       while (g.status === 'playing' && g.dealCount === dealtAt) {
         g = reducer(g, firstLegalMove(g, g.tray.findIndex((s) => s !== null)));
       }
-      expect(markerKind(g)).toBe('star');
       for (const s of g.tray) {
         if (!s) continue;
         dealt++;
-        if (s.marker !== NO_MARKER) marked++;
+        if (s.marker !== NO_MARKER) {
+          marked++;
+          // Under 'progression', an open Nook means stars from here on.
+          expect(s.markerKind).toBe('star');
+        }
       }
     }
 
@@ -374,8 +383,8 @@ describe('gems and earning the Nook', () => {
   });
 
   it('calls markers gems while sealed and stars once open', () => {
-    expect(markerKind(createGame({ seed: 1 }))).toBe('gem');
-    expect(markerKind(unlocked(createGame({ seed: 1 })))).toBe('star');
+    expect(createGame({ seed: 1 }).nookUnlocked).toBe(false);
+    expect(unlocked(createGame({ seed: 1 })).nookUnlocked).toBe(true);
   });
 
   it('deals gems at roughly the advertised rate', () => {
@@ -395,7 +404,7 @@ describe('gems and earning the Nook', () => {
   it('gems only ever sit on filled cells', () => {
     for (let seed = 0; seed < 40; seed++) {
       const result = playOut(createGame({ seed }), seed * 7919 + 3);
-      expect(result.state.markers & ~result.state.board).toBe(0n);
+      expect((result.state.gems | result.state.stars) & ~result.state.board).toBe(0n);
     }
   });
 
@@ -419,7 +428,7 @@ describe('stars', () => {
   const withStar = (run = 0): GameState =>
     makeState({
       board: boardFromRows(['#######.', ...Array(7).fill('........')]),
-      markers: bit(2, 0),
+      stars: bit(2, 0),
       nookUnlocked: true,
       run,
       tray: [slot(ONE), slot(DOM_H), slot(DOM_H)],
@@ -436,10 +445,10 @@ describe('stars', () => {
 
     // 1 cell + (10 line bonus + 50 star) x1 for the first clear of a run.
     expect(next.score).toBe(1 + (10 + STAR_BONUS) * 1);
-    expect(next.lastEvent?.markersCleared).toBe(1);
+    expect(next.lastEvent?.starsCleared).toBe(1);
     expect(next.lastEvent?.starBonus).toBe(STAR_BONUS);
     expect(next.lastEvent?.unlockedNook).toBe(false);
-    expect(next.markers).toBe(EMPTY_BOARD);
+    expect(next.stars).toBe(EMPTY_BOARD);
   });
 
   it('rides the run multiplier, which is the reason to hold one back', () => {
@@ -458,7 +467,7 @@ describe('stars', () => {
   it('pays nothing for the gem that opens the Nook', () => {
     const sealed = makeState({
       board: boardFromRows(['#######.', ...Array(7).fill('........')]),
-      markers: bit(2, 0),
+      gems: bit(2, 0),
       nookUnlocked: false,
       tray: [slot(ONE), slot(DOM_H), slot(DOM_H)],
     });
@@ -474,10 +483,10 @@ describe('stars', () => {
     const s = makeState({
       board: boardFromRows(['#######.', ...Array(7).fill('........')]),
       nookUnlocked: true,
-      tray: [slot(ONE, 1, 0), null, null],
+      tray: [slot(ONE, 1, 0, 'star'), null, null],
     });
     const next = reducer(s, { type: 'place', source: 'tray', index: 0, x: 7, y: 0 });
-    expect(next.lastEvent?.markersCleared).toBe(1);
+    expect(next.lastEvent?.starsCleared).toBe(1);
     expect(next.lastEvent?.starBonus).toBe(STAR_BONUS);
   });
 
@@ -494,7 +503,7 @@ describe('stars', () => {
   it('flags the unlock in the preview while still sealed', () => {
     const sealed = makeState({
       board: boardFromRows(['#######.', ...Array(7).fill('........')]),
-      markers: bit(2, 0),
+      gems: bit(2, 0),
       nookUnlocked: false,
       tray: [slot(ONE), null, null],
     });

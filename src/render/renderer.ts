@@ -3,8 +3,8 @@
 // easy and leaves the canvas doing only what canvas is good at.
 
 import { N, isFilled } from '../core/board';
-import type { Preview, Slot, Source } from '../core/game';
-import { type GameState, markerAt, markerKind, slotFits } from '../core/game';
+import type { MarkerKind, Preview, Slot, Source } from '../core/game';
+import { type GameState, markerAt, slotFits } from '../core/game';
 import { piece, type PieceId } from '../core/pieces';
 import { Effects } from './effects';
 import { computeLayout, trayCellFor, type Layout, type Rect } from './layout';
@@ -31,6 +31,7 @@ export interface DragView {
   readonly snap: { readonly x: number; readonly y: number } | null;
   /** Index into the piece's cells carrying a marker, or NO_MARKER. */
   readonly marker: number;
+  readonly markerKind: MarkerKind;
   /** performance.now() when this piece was picked up, for the lift animation. */
   readonly liftedAt: number;
   readonly preview: Preview;
@@ -63,8 +64,6 @@ export class Renderer {
   private readonly ctx: CanvasRenderingContext2D;
   private readonly sprites = new SpriteCache();
   private dpr = 1;
-  /** Which marker art is live this frame — gems while sealed, stars after. */
-  private marker: 'gem' | 'star' = 'gem';
 
   /** Pops, particles and shake. Owned here so the loop can ask if it's busy. */
   readonly effects = new Effects(reducedMotion);
@@ -109,8 +108,6 @@ export class Renderer {
   ): void {
     const { ctx } = this;
     const l = this.layout;
-
-    this.marker = markerKind(state);
 
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     ctx.fillStyle = FELT;
@@ -197,7 +194,8 @@ export class Renderer {
         const px = b.x + x * b.cell;
         const py = b.y + y * b.cell;
         this.blit(sheet, color, px, py, b.cell);
-        if (markerAt(state, x, y)) this.blitMarker(sheet, px, py, b.cell);
+        const marker = markerAt(state, x, y);
+        if (marker) this.blitMarker(sheet, marker, px, py, b.cell);
       }
     }
 
@@ -399,7 +397,7 @@ export class Renderer {
       const px = view.ghostX + dx * cell;
       const py = view.ghostY + dy * cell;
       this.blit(sheet, view.color, px, py, cell);
-      if (i === view.marker) this.blitMarker(sheet, px, py, cell);
+      if (i === view.marker) this.blitMarker(sheet, view.markerKind, px, py, cell);
     });
     ctx.restore();
   }
@@ -422,7 +420,7 @@ export class Renderer {
       const px = originX + dx * cell;
       const py = originY + dy * cell;
       this.blit(sheet, slot.color, px, py, cell);
-      if (i === slot.marker) this.blitMarker(sheet, px, py, cell);
+      if (i === slot.marker) this.blitMarker(sheet, slot.markerKind, px, py, cell);
     });
     ctx.restore();
   }
@@ -440,12 +438,12 @@ export class Renderer {
 
   private blitMarker(
     sheet: SpriteSheet,
+    kind: MarkerKind,
     x: number,
     y: number,
     size: number,
   ): void {
-    const art = this.marker === 'star' ? sheet.star : sheet.gem;
-    this.ctx.drawImage(art, x, y, size, size);
+    this.ctx.drawImage(kind === 'star' ? sheet.star : sheet.gem, x, y, size, size);
   }
 }
 

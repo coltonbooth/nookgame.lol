@@ -34,22 +34,30 @@ export interface Slot {
   readonly color: number;
   /** Index into the piece's cells carrying a marker, or NO_MARKER. */
   readonly marker: number;
+  /** Which marker that cell carries. Meaningless when `marker` is NO_MARKER. */
+  readonly markerKind: MarkerKind;
 }
 
 export const NO_MARKER = -1;
 
 /**
- * A marked cell means one of two things depending on where the run is up to.
- * While the Nook is sealed, markers are **gems** and clearing one opens it.
- * Once it is open they are **stars**, and clearing one pays score.
+ * Two kinds of marked cell. **Gems** open the Nook and count toward level
+ * objectives; **stars** pay score.
  *
- * The board never holds both: unlocking wipes the gems, and stars only appear
- * afterwards. `markerKind` is the single source of truth for which is on screen.
+ * Which ones appear depends on the policy:
+ *
+ * - `progression` (endless, Today's Nook) — gems while the Nook is sealed,
+ *   stars once it is open. The board only ever holds one kind, because
+ *   unlocking wipes the gems and stars only start afterwards.
+ * - `mixed` (levels) — both, side by side. Levels hand you the Nook up front,
+ *   so gems have no unlocking left to do and become objective currency.
+ *
+ * They are stored as two separate bitboards precisely because `mixed` breaks
+ * the assumption that only one kind is ever on screen.
  */
 export type MarkerKind = 'gem' | 'star';
 
-export const markerKind = (state: GameState): MarkerKind =>
-  state.nookUnlocked ? 'star' : 'gem';
+export type MarkerPolicy = 'progression' | 'mixed';
 
 /**
  * Roughly one dealt piece in twelve carries a marker — about three or four in a
@@ -85,8 +93,8 @@ export interface PlacementEvent {
   readonly multiplier: number;
   readonly sweptClean: boolean;
   readonly dealt: boolean;
-  /** Markers caught by this clear — gems while sealed, stars once open. */
-  readonly markersCleared: number;
+  readonly gemsCleared: number;
+  readonly starsCleared: number;
   /** Points those markers were worth. Zero for gems, which buy the Nook instead. */
   readonly starBonus: number;
   /** True on the one placement that opens the Nook. */
@@ -104,6 +112,8 @@ export interface RunStats {
   readonly sweptClean: number;
   readonly linesCleared: number;
   readonly placements: number;
+  readonly gemsCleared: number;
+  readonly starsCleared: number;
   /**
    * Best single clear, in lines, during each deal in order. One square per
    * entry in the shared grid, so a run reads at a glance without spoiling the
@@ -117,6 +127,8 @@ export const EMPTY_STATS: RunStats = {
   sweptClean: 0,
   linesCleared: 0,
   placements: 0,
+  gemsCleared: 0,
+  starsCleared: 0,
   dealClears: [],
 };
 
@@ -125,8 +137,13 @@ export interface GameState {
   readonly stats: RunStats;
   /** 64 entries. 0 is empty; 1–4 index the enamel palette. */
   readonly colors: Uint8Array;
-  /** Board cells holding a marker. Always a subset of `board`. */
-  readonly markers: Board;
+  /** Board cells holding a gem. Always a subset of `board`. */
+  readonly gems: Board;
+  /** Board cells holding a star. Always a subset of `board`. */
+  readonly stars: Board;
+  readonly markerPolicy: MarkerPolicy;
+  /** One marked cell per this many dealt pieces. */
+  readonly markerOneIn: number;
   readonly tray: ReadonlyArray<Slot | null>;
   readonly nook: Slot | null;
   /**
@@ -160,6 +177,16 @@ export interface NewGameOptions {
    * so each day opens on a board with its own shape; endless starts empty.
    */
   readonly layoutCells?: number;
+  /** Levels use 'mixed' so gems and stars can both be collected. */
+  readonly markerPolicy?: MarkerPolicy;
+  /** Levels hand the Nook over up front rather than making you earn it. */
+  readonly nookUnlocked?: boolean;
+  /**
+   * One marked cell per this many dealt pieces. Levels lower it, because a
+   * "collect 10 gems" goal is impossible at the endless rate — over a long run
+   * the endless rate only ever produces three or four.
+   */
+  readonly markerOneIn?: number;
 }
 
 export function createGame(options: NewGameOptions): GameState {
@@ -172,10 +199,13 @@ export function createGame(options: NewGameOptions): GameState {
     board: layout?.board ?? EMPTY_BOARD,
     stats: EMPTY_STATS,
     colors: layout?.colors ?? new Uint8Array(CELLS),
-    markers: EMPTY_BOARD,
+    gems: EMPTY_BOARD,
+    stars: EMPTY_BOARD,
+    markerPolicy: options.markerPolicy ?? 'progression',
+    markerOneIn: options.markerOneIn ?? MARKER_ONE_IN,
     tray: [null, null, null],
     nook: null,
-    nookUnlocked: false,
+    nookUnlocked: options.nookUnlocked ?? false,
     swapUsed: false,
     score: 0,
     run: 0,
@@ -208,9 +238,16 @@ export function slotFits(state: GameState, slot: Slot | null): boolean {
   return slot !== null && fitsAnywhere(state.board, slot.piece);
 }
 
-/** Is there a marker sitting on this board cell? */
-export const markerAt = (state: GameState, x: number, y: number): boolean =>
-  isFilled(state.markers, x, y);
+/** Which marker, if any, is sitting on this board cell. */
+export function markerAt(
+  state: GameState,
+  x: number,
+  y: number,
+): MarkerKind | null {
+  if (isFilled(state.gems, x, y)) return 'gem';
+  if (isFilled(state.stars, x, y)) return 'star';
+  return null;
+}
 
 const trayEmpty = (tray: ReadonlyArray<Slot | null>): boolean =>
   tray.every((s) => s === null);
@@ -236,15 +273,22 @@ function deal(state: GameState): GameState {
     // Markers keep coming at the same cadence for the whole run; what changes
     // at the halfway point is what they mean.
     let marker = NO_MARKER;
-    const [roll, afterRoll] = nextInt(rng, MARKER_ONE_IN);
+    let markerKind: MarkerKind = state.nookUnlocked ? 'star' : 'gem';
+    const [roll, afterRoll] = nextInt(rng, state.markerOneIn);
     rng = afterRoll;
     if (roll === 0) {
       const [cell, afterCell] = nextInt(rng, piece(id).cells.length);
       rng = afterCell;
       marker = cell;
+
+      if (state.markerPolicy === 'mixed') {
+        const [coin, afterCoin] = nextInt(rng, 2);
+        rng = afterCoin;
+        markerKind = coin === 0 ? 'gem' : 'star';
+      }
     }
 
-    return { piece: id, color: color + 1, marker };
+    return { piece: id, color: color + 1, marker, markerKind };
   });
 
   return {
@@ -276,9 +320,11 @@ function takeSlot(
 
 interface Resolved {
   readonly board: Board;
-  readonly markers: Board;
+  readonly gems: Board;
+  readonly stars: Board;
   readonly lines: FullLines;
-  readonly markersCleared: number;
+  readonly gemsCleared: number;
+  readonly starsCleared: number;
   readonly unlockedNook: boolean;
   readonly turn: TurnScore;
 }
@@ -295,10 +341,15 @@ function resolve(
   y: number,
   mask: bigint,
 ): Resolved {
-  let markers = state.markers;
+  let gems = state.gems;
+  let stars = state.stars;
   if (slot.marker !== NO_MARKER) {
     const offset = piece(slot.piece).cells[slot.marker];
-    if (offset) markers |= bit(x + offset[0], y + offset[1]);
+    if (offset) {
+      const at = bit(x + offset[0], y + offset[1]);
+      if (slot.markerKind === 'gem') gems |= at;
+      else stars |= at;
+    }
   }
 
   const placed = place(state.board, mask);
@@ -306,25 +357,30 @@ function resolve(
   const clearedCount = lines.rows.length + lines.cols.length;
 
   let board = placed;
-  let markersCleared = 0;
+  let gemsCleared = 0;
+  let starsCleared = 0;
   if (clearedCount > 0) {
     const cleared = lineMask(lines);
     board = clearLines(placed, lines);
-    markersCleared = popcount(markers & cleared);
-    markers &= ~cleared;
+    gemsCleared = popcount(gems & cleared);
+    starsCleared = popcount(stars & cleared);
+    gems &= ~cleared;
+    stars &= ~cleared;
   }
 
-  // A gem buys the Nook, a star buys points, and one placement never does both:
-  // the unlock is decided by the state *before* this placement.
-  const unlockedNook = !state.nookUnlocked && markersCleared > 0;
-  if (unlockedNook) markers = EMPTY_BOARD;
-  const starsCleared = state.nookUnlocked ? markersCleared : 0;
+  // A gem opens the Nook — decided by the state *before* this placement, so a
+  // gem never both unlocks and pays. Under 'mixed' the Nook is already open,
+  // which leaves gems as pure objective currency.
+  const unlockedNook = !state.nookUnlocked && gemsCleared > 0;
+  if (unlockedNook) gems = EMPTY_BOARD;
 
   return {
     board,
-    markers,
+    gems,
+    stars,
     lines,
-    markersCleared,
+    gemsCleared,
+    starsCleared,
     unlockedNook,
     turn: scoreTurn(piece(slot.piece).size, clearedCount, state.run, starsCleared),
   };
@@ -337,6 +393,8 @@ export interface Preview {
   readonly multiplier: number;
   /** Markers this placement would catch. Drives the preview highlight. */
   readonly markersCleared: number;
+  readonly gemsCleared: number;
+  readonly starsCleared: number;
   /** True if this is the placement that would open the Nook. */
   readonly wouldUnlock: boolean;
 }
@@ -348,6 +406,8 @@ export const NO_PREVIEW: Preview = {
   gained: 0,
   multiplier: 1,
   markersCleared: 0,
+  gemsCleared: 0,
+  starsCleared: 0,
   wouldUnlock: false,
 };
 
@@ -377,7 +437,9 @@ export function preview(
     lines: outcome.lines,
     gained: outcome.turn.total,
     multiplier: outcome.turn.multiplier,
-    markersCleared: outcome.markersCleared,
+    markersCleared: outcome.gemsCleared + outcome.starsCleared,
+    gemsCleared: outcome.gemsCleared,
+    starsCleared: outcome.starsCleared,
     wouldUnlock: outcome.unlockedNook,
   };
 }
@@ -410,7 +472,7 @@ function doPlace(
   const mask = maskAt(slot.piece, x, y);
   if (mask === null || !canPlace(state.board, mask)) return state;
 
-  const { board, markers, lines, turn, markersCleared, unlockedNook } = resolve(
+  const { board, gems, stars, lines, turn, gemsCleared, starsCleared, unlockedNook } = resolve(
     state,
     slot,
     x,
@@ -431,7 +493,8 @@ function doPlace(
         clearedCells.push({
           cell,
           color: colors[cell]!,
-          hadMarker: (state.markers & (1n << BigInt(cell))) !== 0n,
+          hadMarker:
+            ((state.gems | state.stars) & (1n << BigInt(cell))) !== 0n,
         });
       }
       colors[cell] = 0;
@@ -455,7 +518,8 @@ function doPlace(
     ...state,
     board,
     colors,
-    markers,
+    gems,
+    stars,
     tray,
     nook,
     stats: {
@@ -463,6 +527,8 @@ function doPlace(
       sweptClean: state.stats.sweptClean + (board === EMPTY_BOARD ? 1 : 0),
       linesCleared: state.stats.linesCleared + cleared,
       placements: state.stats.placements + 1,
+      gemsCleared: state.stats.gemsCleared + gemsCleared,
+      starsCleared: state.stats.starsCleared + starsCleared,
       dealClears,
     },
     nookUnlocked: state.nookUnlocked || unlockedNook,
@@ -481,7 +547,8 @@ function doPlace(
       multiplier: turn.multiplier,
       sweptClean: board === EMPTY_BOARD,
       dealt: false,
-      markersCleared,
+      gemsCleared,
+      starsCleared,
       starBonus: turn.stars,
       unlockedNook,
     },
@@ -528,7 +595,8 @@ export function serialize(state: GameState): string {
   return JSON.stringify({
     board: state.board.toString(36),
     colors: Array.from(state.colors),
-    markers: state.markers.toString(36),
+    gems: state.gems.toString(36),
+    stars: state.stars.toString(36),
     tray: state.tray,
     nook: state.nook,
     nookUnlocked: state.nookUnlocked,

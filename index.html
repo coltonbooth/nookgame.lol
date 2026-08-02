@@ -20,11 +20,13 @@
         <nav id="modes" aria-label="game mode">
           <button id="mode-endless" type="button" class="mode is-on">endless</button>
           <button id="mode-daily" type="button" class="mode">today</button>
+          <button id="mode-levels" type="button" class="mode">levels</button>
         </nav>
         <div id="score-plate">
           <span id="score" class="score-digits">0</span>
         </div>
         <p id="daily-label" hidden></p>
+        <div id="goals" hidden aria-live="polite"></div>
         <div id="run-indicator" aria-hidden="true"></div>
       </header>
 
@@ -33,9 +35,12 @@
       <div id="panel" class="panel" hidden>
         <p class="panel-title">nowhere left to put it</p>
         <p class="panel-score"><span id="panel-score">0</span></p>
-        <p class="panel-best">best <span id="panel-best">0</span></p>
+        <p class="panel-best">
+          <span id="panel-best-label">best</span> <span id="panel-best">0</span>
+        </p>
         <div class="panel-actions">
           <button id="restart" type="button">again</button>
+          <button id="next-level" type="button" hidden>next level</button>
           <button id="share" type="button" hidden>share</button>
         </div>
         <p id="share-note" class="panel-note" aria-live="polite"></p>

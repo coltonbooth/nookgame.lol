@@ -169,6 +169,7 @@ export class DragController {
       piece: held.slot.piece,
       color: held.slot.color,
       marker: held.slot.marker,
+      markerKind: held.slot.markerKind,
       liftedAt: held.liftedAt,
       ghostX,
       ghostY,

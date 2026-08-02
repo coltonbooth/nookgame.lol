@@ -97,6 +97,36 @@ body {
   display: none;
 }
 
+/* Goal chips: the level's objectives, ticking over as you meet them. */
+#goals {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  max-width: 92vw;
+}
+
+#goals[hidden] {
+  display: none;
+}
+
+.goal {
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: rgb(239 232 218 / 0.62);
+  background: rgb(0 0 0 / 0.22);
+  border: 1px solid rgb(200 162 74 / 0.18);
+  font-variant-numeric: tabular-nums;
+}
+
+.goal.is-met {
+  color: #1a1d23;
+  background: var(--brass);
+  border-color: var(--brass);
+}
+
 #score-plate {
   padding: 4px 18px;
   border-radius: 4px;
@@ -209,7 +239,18 @@ body {
   display: none;
 }
 
+#next-level[hidden] {
+  display: none;
+}
+
+#next-level {
+  border-color: var(--brass);
+  color: #1a1d23;
+  background: var(--brass);
+}
+
 #restart,
+#next-level,
 #share {
   padding: 10px 26px;
   font: inherit;

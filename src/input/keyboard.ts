@@ -71,6 +71,7 @@ export class KeyboardController {
       piece: slot.piece,
       color: slot.color,
       marker: slot.marker,
+      markerKind: slot.markerKind,
       liftedAt: sel.liftedAt,
       ghostX: b.x + sel.x * b.cell,
       ghostY: b.y + sel.y * b.cell,

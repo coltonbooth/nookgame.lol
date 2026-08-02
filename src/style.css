@@ -228,21 +228,37 @@ body {
 .share-result {
   margin: 4px 0 2px;
   padding: 12px 16px;
-  max-width: min(92vw, 420px);
+  max-width: min(94vw, 460px);
   border-radius: 8px;
   background: rgb(0 0 0 / 0.3);
   border: 1px solid rgb(200 162 74 / 0.25);
   color: var(--ivory);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 15px;
-  line-height: 1.7;
   text-align: center;
-  white-space: pre-wrap;
-  word-break: break-word;
 
   -webkit-user-select: text;
   user-select: text;
   cursor: text;
+}
+
+.share-head {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The grid is the thing people actually look at, so give it room. */
+.share-grid {
+  margin: 10px 0 8px;
+  font-size: 26px;
+  line-height: 1.35;
+  letter-spacing: 0.06em;
+  word-break: break-word;
+}
+
+.share-notes {
+  font-size: 13px;
+  color: rgb(239 232 218 / 0.6);
 }
 
 .share-result[hidden] {

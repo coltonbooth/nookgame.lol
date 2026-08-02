@@ -70,7 +70,7 @@ export class EndPanel {
     this.bestRow.hidden = view.best <= 0;
 
     const result = view.result ?? '';
-    this.result.textContent = result;
+    this.renderResult(result);
     this.result.hidden = result.length === 0;
     this.copy.hidden = result.length === 0;
     this.share.hidden = result.length === 0 || view.canShareSheet !== true;
@@ -79,6 +79,33 @@ export class EndPanel {
     this.restart.textContent = view.restartLabel;
     this.note.textContent = '';
     this.panel.hidden = false;
+  }
+
+  /**
+   * Header, grid, notes — each sized for its job, and the grid given real
+   * size because it is the part anyone actually looks at. Still one selectable
+   * block, so select-all-and-copy gets the whole thing.
+   */
+  private renderResult(result: string): void {
+    if (result.length === 0) {
+      this.result.replaceChildren();
+      return;
+    }
+
+    const lines = result.split('\n');
+    const classes =
+      lines.length >= 3
+        ? ['share-head', 'share-grid', 'share-notes']
+        : ['share-head', 'share-notes'];
+
+    this.result.replaceChildren(
+      ...lines.map((line, i) => {
+        const el = document.createElement('div');
+        el.className = classes[Math.min(i, classes.length - 1)]!;
+        el.textContent = line;
+        return el;
+      }),
+    );
   }
 
   hide(): void {

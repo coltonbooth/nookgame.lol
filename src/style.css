@@ -1,0 +1,253 @@
+/* Nook — chrome only. The board, tray and Nook live on the canvas. */
+
+:root {
+  --felt: #23262e;
+  --recess: #1a1d23;
+  --brass: #c8a24a;
+  --ivory: #efe8da;
+
+  --enamel-viridian: #1e7a6a;
+  --enamel-cobalt: #2b5fbf;
+  --enamel-oxblood: #a32e3e;
+  --enamel-saffron: #e0a032;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--felt);
+  color: var(--ivory);
+
+  /* Kill pull-to-refresh so it can't fire mid-drag. */
+  overscroll-behavior: none;
+  overflow: hidden;
+
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+
+  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+#app {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  height: 100%;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right)
+    env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
+/* --- HUD ------------------------------------------------------------- */
+
+#hud {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 14px 0 8px;
+  flex: 0 0 auto;
+}
+
+#modes {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 999px;
+  background: rgb(0 0 0 / 0.25);
+  border: 1px solid rgb(200 162 74 / 0.18);
+}
+
+.mode {
+  appearance: none;
+  border: 0;
+  border-radius: 999px;
+  padding: 5px 16px;
+  font: inherit;
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  color: rgb(239 232 218 / 0.5);
+  background: transparent;
+  cursor: pointer;
+}
+
+.mode.is-on {
+  color: var(--ivory);
+  background: rgb(200 162 74 / 0.16);
+}
+
+#daily-label {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: rgb(200 162 74 / 0.75);
+}
+
+#daily-label[hidden] {
+  display: none;
+}
+
+#score-plate {
+  padding: 4px 18px;
+  border-radius: 4px;
+  border: 1px solid rgb(200 162 74 / 0.35);
+  background: linear-gradient(180deg, #2b2f38, #22252c);
+}
+
+.score-digits {
+  /* Tabular figures matter here — non-tabular digits jitter as the score rolls. */
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+  font-size: 30px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--ivory);
+}
+
+#run-indicator {
+  display: flex;
+  gap: 6px;
+  height: 8px;
+}
+
+.run-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgb(239 232 218 / 0.12);
+  border: 1px solid rgb(200 162 74 / 0.25);
+}
+
+.run-dot.lit {
+  background: var(--enamel-saffron);
+  border-color: var(--brass);
+}
+
+/* --- Stage ----------------------------------------------------------- */
+
+/* The wrapper does the flexing; the canvas is sized in script to match it.
+   Sizing the canvas itself from its own box would feed back on the flex
+   layout and it could never shrink. */
+#stage-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  overflow: hidden;
+}
+
+#stage {
+  /* Without this the browser steals the drag for scrolling. */
+  touch-action: none;
+  display: block;
+}
+
+/* --- Game over panel ------------------------------------------------- */
+
+.panel {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: rgb(26 29 35 / 0.82);
+  backdrop-filter: blur(3px);
+}
+
+.panel[hidden] {
+  display: none;
+}
+
+.panel-title {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 400;
+  letter-spacing: 0.01em;
+  color: rgb(239 232 218 / 0.72);
+}
+
+.panel-score {
+  margin: 0;
+  font-size: 46px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.panel-best {
+  margin: 0;
+  font-size: 14px;
+  letter-spacing: 0.02em;
+  color: rgb(239 232 218 / 0.45);
+  font-variant-numeric: tabular-nums;
+}
+
+.panel-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.panel-note {
+  margin: 0;
+  min-height: 1.2em;
+  font-size: 13px;
+  color: rgb(239 232 218 / 0.5);
+}
+
+#share[hidden] {
+  display: none;
+}
+
+#restart,
+#share {
+  padding: 10px 26px;
+  font: inherit;
+  font-size: 16px;
+  color: var(--ivory);
+  background: transparent;
+  border: 1px solid rgb(200 162 74 / 0.5);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+#restart:hover,
+#share:hover {
+  background: rgb(200 162 74 / 0.1);
+}
+
+#share {
+  border-color: var(--brass);
+  color: var(--brass);
+}
+
+/* --- a11y ------------------------------------------------------------ */
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

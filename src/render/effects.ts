@@ -48,6 +48,8 @@ export interface ClearBurst {
   readonly originX: number;
   readonly originY: number;
   readonly lines: number;
+  /** Streak after this clear. A long run earns impact a single wouldn't. */
+  readonly run: number;
 }
 
 const PRAISE_MS = 950;
@@ -55,32 +57,46 @@ const PRAISE_MS = 950;
 /**
  * The praise ladder.
  *
- * This is the one place Nook deliberately breaks its own voice rule — the
- * design doc asks for "lowercase, gentle, never exclamatory", and a word
- * flying across the board is none of those things. Keeping it lowercase is the
- * compromise: the escalation lands without the game starting to shout.
- *
- * Swap this array for capitals if you want the full arcade treatment.
+ * This is where Nook deliberately breaks its own voice rule — the design doc
+ * asks for "lowercase, gentle, never exclamatory", and a word flying across the
+ * board is none of those things. The ladder climbs *out* of the house voice
+ * rather than starting outside it: the low rungs are the game as written, and
+ * the shouting is reserved for a clear that has genuinely earned it. Escalation
+ * you can see is worth more than consistency nobody notices.
  */
 export const PRAISE = [
   'nice',
+  'sweet',
   'great',
   'wow',
-  'amazing',
-  'unbelievable',
-  'legendary',
+  'AMAZING',
+  'UNBELIEVABLE',
+  'LEGENDARY',
 ] as const;
+
+/** At and above this rung the word is drawn hot, in brass rather than ivory. */
+const HOT_RUNG = 4;
 
 /**
  * How impressive a clear was. Lines and streak both feed it, so a single row
- * deep into a run earns praise the same way a triple does cold — and a plain
- * single with no run earns none, because praising everything praises nothing.
+ * deep into a run earns praise the same way a triple does cold.
+ *
+ * Every clear says *something*. The old threshold started at two, which meant
+ * the overwhelmingly common case — a single line at the start of a run — got a
+ * silent pop and nothing else. "Praising everything praises nothing" is true of
+ * praising everything *equally*; a ladder that starts quietly and climbs is a
+ * different thing, and the bottom rung still has to exist for the climb to read.
  */
 export function praiseFor(lines: number, run: number): string | null {
   if (lines <= 0) return null;
   const heat = lines + Math.max(0, run - 1);
-  if (heat < 2) return null;
-  return PRAISE[Math.min(heat - 2, PRAISE.length - 1)]!;
+  return PRAISE[Math.min(heat - 1, PRAISE.length - 1)]!;
+}
+
+/** Whether a clear of this size deserves the brass treatment. */
+export function praiseIsHot(lines: number, run: number): boolean {
+  const heat = lines + Math.max(0, run - 1);
+  return heat - 1 >= HOT_RUNG;
 }
 
 interface Praise {
@@ -89,10 +105,25 @@ interface Praise {
   readonly hot: boolean;
 }
 
+/** How long a score reading floats before it's gone. */
+const SCORE_MS = 900;
+/** A gain at or above this is drawn big and hot. */
+const SCORE_HOT = 100;
+
+interface ScorePop {
+  readonly text: string;
+  /** Board cell the piece landed on. Resolved to pixels at draw time. */
+  readonly x: number;
+  readonly y: number;
+  readonly start: number;
+  readonly hot: boolean;
+}
+
 export class Effects {
   private pops: Pop[] = [];
   private particles: Particle[] = [];
   private praise: Praise | null = null;
+  private scores: ScorePop[] = [];
   private shakeStart = -1;
   private shakeAmount = 0;
 
@@ -104,6 +135,7 @@ export class Effects {
       this.pops.length > 0 ||
       this.particles.length > 0 ||
       this.praise !== null ||
+      this.scores.length > 0 ||
       this.shakeStart >= 0
     );
   }
@@ -112,12 +144,30 @@ export class Effects {
     this.pops = [];
     this.particles = [];
     this.praise = null;
+    this.scores = [];
     this.shakeStart = -1;
   }
 
   /** One word, over the board. Replaces any word still on screen. */
   say(text: string, now: number, hot = false): void {
     this.praise = { text, start: now, hot };
+  }
+
+  /**
+   * The number, floating up from where the piece landed.
+   *
+   * The score plate already rolls, but it lives up in the header, away from
+   * where the player is looking. Putting the gain at the point of contact is
+   * what connects the placement to the reward.
+   */
+  score(gained: number, x: number, y: number, now: number): void {
+    this.scores.push({
+      text: `+${gained.toLocaleString('en-US')}`,
+      x,
+      y,
+      start: now,
+      hot: gained >= SCORE_HOT,
+    });
   }
 
   spawn(burst: ClearBurst, layout: Layout, now: number): void {
@@ -159,11 +209,13 @@ export class Effects {
       }
     }
 
-    // Screen shake only on three lines or more. Any lower and it reads as a
-    // bug rather than as impact.
-    if (burst.lines >= 3 && !reduced) {
+    // Shake from two lines up. Three was too high a bar: doubles are the clear
+    // the game most wants players chasing, and they were landing silently.
+    // Deep into a run a single earns it too — the streak is the achievement.
+    const impact = burst.lines + Math.max(0, burst.run - 2);
+    if (impact >= 2 && !reduced) {
       this.shakeStart = now;
-      this.shakeAmount = Math.min(1, (burst.lines - 2) / 3);
+      this.shakeAmount = Math.min(1, (impact - 1) / 3);
     }
   }
 
@@ -185,7 +237,47 @@ export class Effects {
   draw(ctx: CanvasRenderingContext2D, layout: Layout, now: number): void {
     this.drawPops(ctx, layout, now);
     this.drawParticles(ctx, now);
+    this.drawScores(ctx, layout, now);
     this.drawPraise(ctx, layout, now);
+  }
+
+  private drawScores(
+    ctx: CanvasRenderingContext2D,
+    layout: Layout,
+    now: number,
+  ): void {
+    const b = layout.board;
+    const alive: ScorePop[] = [];
+
+    for (const pop of this.scores) {
+      const t = (now - pop.start) / SCORE_MS;
+      if (t >= 1) continue;
+      alive.push(pop);
+
+      // Overshoot in, then drift steadily upward and fade.
+      const grow = t < 0.2 ? easeOutBack(t / 0.2) : 1;
+      const size = b.cell * (pop.hot ? 0.62 : 0.46) * (0.6 + grow * 0.4);
+      const rise = t * b.cell * 1.3;
+      const alpha = t > 0.55 ? 1 - (t - 0.55) / 0.45 : 1;
+
+      const cx = b.x + (pop.x + 0.5) * b.cell;
+      const cy = b.y + (pop.y + 0.5) * b.cell - rise;
+
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, alpha);
+      ctx.font = `700 ${Math.round(size)}px ui-sans-serif, system-ui, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.lineJoin = 'round';
+      ctx.lineWidth = Math.max(2, size * 0.2);
+      ctx.strokeStyle = 'rgba(26, 29, 35, 0.9)';
+      ctx.strokeText(pop.text, cx, cy);
+      ctx.fillStyle = pop.hot ? '#E0A032' : '#EFE8DA';
+      ctx.fillText(pop.text, cx, cy);
+      ctx.restore();
+    }
+
+    this.scores = alive;
   }
 
   private drawPraise(

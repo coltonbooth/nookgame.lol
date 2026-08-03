@@ -13,6 +13,7 @@ import { nextInt } from './rng';
 import { createGame, reducer, type GameState } from './game';
 import {
   MERCY_FLOOR,
+  MERCY_SPAN,
   analyseBoard,
   generateLayout,
   repeatedShapes,
@@ -54,9 +55,9 @@ const CHECKERBOARD = boardFromRows([
 const FULL = boardFromRows(Array(8).fill('########'));
 
 describe('mercy and openness', () => {
-  it('decays mercy as the score rises, down to a floor', () => {
+  it('decays mercy as a run goes on, down to a floor', () => {
     expect(mercyFor(0)).toBe(1);
-    expect(mercyFor(15000)).toBeCloseTo(0.5, 5);
+    expect(mercyFor(MERCY_SPAN / 2)).toBeCloseTo(0.5, 5);
     expect(mercyFor(1_000_000)).toBe(MERCY_FLOOR);
   });
 
@@ -244,7 +245,8 @@ describe('anti-repetition', () => {
           board: EMPTY_BOARD,
           nook: null,
           recentShapes: [SQUARE, DOM_H, BIG, SQUARE, SQUARE, DOM_H],
-          score: 0,
+          progress: 0,
+          dealsSinceCombo: 0,
           fairDeal: false,
         },
         state,
@@ -378,7 +380,8 @@ describe('guaranteed fit', () => {
           board: CHECKERBOARD,
           nook: null,
           recentShapes: [],
-          score: 0,
+          progress: 0,
+          dealsSinceCombo: 0,
           fairDeal: false,
         },
         seed,
@@ -389,7 +392,14 @@ describe('guaranteed fit', () => {
 
   it('gives up gracefully on a board where nothing at all fits', () => {
     const result = dealThree(
-      { board: FULL, nook: null, recentShapes: [], score: 0, fairDeal: false },
+      {
+        board: FULL,
+        nook: null,
+        recentShapes: [],
+        progress: 0,
+        dealsSinceCombo: 0,
+        fairDeal: false,
+      },
       1,
     );
     expect(result.pieces).toHaveLength(3);

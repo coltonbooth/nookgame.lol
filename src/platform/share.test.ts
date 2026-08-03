@@ -49,7 +49,7 @@ describe('shareText', () => {
       }),
     });
     expect(text.split('\n')[2]).toBe(
-      'longest run ×4.5 · swept clean twice · 30 lines',
+      'longest run ×5 · swept clean twice · 30 lines',
     );
   });
 

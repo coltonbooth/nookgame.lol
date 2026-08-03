@@ -24,10 +24,12 @@
         </nav>
         <div id="score-plate">
           <span id="score" class="score-digits">0</span>
+          <span id="multiplier" class="multiplier" aria-hidden="true">×1</span>
         </div>
         <p id="daily-label" hidden></p>
         <div id="goals" hidden aria-live="polite"></div>
         <div id="run-indicator" aria-hidden="true"></div>
+        <p id="keys" class="keys" hidden></p>
       </header>
 
       <div id="stage-wrap"><canvas id="stage"></canvas></div>
@@ -40,6 +42,7 @@
         </p>
         <div id="share-result" class="share-result" hidden></div>
         <div class="panel-actions">
+          <button id="use-key" type="button" class="key-action" hidden>use a key</button>
           <button id="restart" type="button">again</button>
           <button id="next-level" type="button" hidden>next level</button>
           <button id="copy" type="button" hidden>copy</button>

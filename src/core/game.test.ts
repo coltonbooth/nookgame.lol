@@ -9,6 +9,7 @@ import {
   anyLegalMove,
   createGame,
   markerAt,
+  KEY_LINES,
   preview,
   reducer,
   replay,
@@ -62,6 +63,9 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
     swapUsed: false,
     score: 0,
     run: 0,
+    runGrace: 0,
+    keys: 0,
+    keyEvent: null,
     status: 'playing',
     rngState: 1,
     dealCount: 1,
@@ -171,8 +175,8 @@ describe('placing and scoring', () => {
     expect(next.lastEvent?.clearedRows).toEqual([0]);
     expect(next.lastEvent?.clearedCols).toEqual([7]);
     expect(next.lastEvent?.sweptClean).toBe(true);
-    // 1 cell + a 2-line bonus of 30 at x1 (this is the first clear of the run).
-    expect(next.score).toBe(31);
+    // 1 cell + a 2-line bonus of 60 at x1.75 (the first clear of a run pays).
+    expect(next.score).toBe(1 + 60 * 1.75);
     expect(next.run).toBe(1);
     expect(Array.from(next.colors).every((c) => c === 0)).toBe(true);
   });
@@ -443,8 +447,8 @@ describe('stars', () => {
       y: 0,
     });
 
-    // 1 cell + (10 line bonus + 50 star) x1 for the first clear of a run.
-    expect(next.score).toBe(1 + (10 + STAR_BONUS) * 1);
+    // 1 cell + (20 line bonus + star) x1.75 for the first clear of a run.
+    expect(next.score).toBe(1 + (20 + STAR_BONUS) * 1.75);
     expect(next.lastEvent?.starsCleared).toBe(1);
     expect(next.lastEvent?.starBonus).toBe(STAR_BONUS);
     expect(next.lastEvent?.unlockedNook).toBe(false);
@@ -452,7 +456,7 @@ describe('stars', () => {
   });
 
   it('rides the run multiplier, which is the reason to hold one back', () => {
-    // run 4 before this placement -> 5 after -> x3.
+    // run 4 before this placement -> 5 after -> x4.75.
     const next = reducer(withStar(4), {
       type: 'place',
       source: 'tray',
@@ -460,8 +464,8 @@ describe('stars', () => {
       x: 7,
       y: 0,
     });
-    expect(next.lastEvent?.multiplier).toBe(3);
-    expect(next.score).toBe(1 + (10 + STAR_BONUS) * 3);
+    expect(next.lastEvent?.multiplier).toBe(4.75);
+    expect(next.score).toBe(1 + (20 + STAR_BONUS) * 4.75);
   });
 
   it('pays nothing for the gem that opens the Nook', () => {
@@ -475,7 +479,7 @@ describe('stars', () => {
 
     expect(next.lastEvent?.unlockedNook).toBe(true);
     expect(next.lastEvent?.starBonus).toBe(0);
-    expect(next.score).toBe(1 + 10); // the line bonus alone
+    expect(next.score).toBe(1 + 20 * 1.75); // the line bonus alone
   });
 
   it('counts a star the placed piece brings with it', () => {
@@ -571,8 +575,8 @@ describe('preview', () => {
     expect(p.legal).toBe(true);
     expect(p.lines.rows).toEqual([0]);
     expect(p.lines.cols).toEqual([]);
-    expect(p.multiplier).toBe(2); // run would become 3
-    expect(p.gained).toBe(1 + 10 * 2);
+    expect(p.multiplier).toBe(3.25); // run would become 3
+    expect(p.gained).toBe(1 + 20 * 3.25);
 
     expect(preview(s, 'tray', 0, 0, 0).legal).toBe(false);
     expect(preview(s, 'nook', 0, 7, 0).legal).toBe(false);
@@ -650,6 +654,88 @@ describe('replay determinism', () => {
     const a = playOut(createGame({ seed: 1 }), 999);
     const b = playOut(createGame({ seed: 2 }), 999);
     expect(serialize(a.state)).not.toBe(serialize(b.state));
+  });
+});
+
+describe('the Key', () => {
+  /**
+   * Play the 1x1 into a checkerboard and the run is over: nothing else in the
+   * tray fits, and going through the reducer is what sets `status` to 'over'.
+   */
+  const stuck = (overrides: Partial<GameState> = {}): GameState =>
+    reducer(
+      makeState({
+        board: CHECKERBOARD,
+        tray: [slot(ONE), slot(BIG), slot(BIG)],
+        keys: 1,
+        ...overrides,
+      }),
+      { type: 'place', source: 'tray', index: 0, x: 0, y: 0 },
+    );
+
+  it('does nothing while the run is still playable', () => {
+    const alive = makeState({ tray: [slot(ONE), null, null], keys: 1 });
+    expect(alive.status).toBe('playing');
+    expect(reducer(alive, { type: 'key' })).toBe(alive);
+  });
+
+  it('does nothing with no keys in hand', () => {
+    const dead = stuck({ keys: 0 });
+    expect(dead.status).toBe('over');
+    expect(reducer(dead, { type: 'key' })).toBe(dead);
+  });
+
+  it('always leaves a legal move — that is the whole promise', () => {
+    const dead = stuck();
+    expect(dead.status).toBe('over');
+    expect(anyLegalMove(dead)).toBe(false);
+
+    const rescued = reducer(dead, { type: 'key' });
+    expect(rescued.status).toBe('playing');
+    expect(anyLegalMove(rescued)).toBe(true);
+    expect(rescued.keys).toBe(0);
+  });
+
+  it('clears at least the promised number of lines', () => {
+    const dead = stuck();
+    const rescued = reducer(dead, { type: 'key' });
+    expect(rescued.keyEvent?.lines).toBeGreaterThanOrEqual(KEY_LINES);
+    expect(popcount(rescued.board)).toBeLessThan(popcount(dead.board));
+  });
+
+  it('pays nothing and does not advance the run', () => {
+    // A rescue that scored would make dying on purpose a strategy.
+    const dead = stuck({ run: 3 });
+    const rescued = reducer(dead, { type: 'key' });
+    expect(rescued.score).toBe(dead.score);
+    expect(rescued.run).toBe(dead.run);
+  });
+
+  it('drops the colours and markers of everything it wiped', () => {
+    const dead = stuck();
+    const rescued = reducer(dead, { type: 'key' });
+    for (let cell = 0; cell < CELLS; cell++) {
+      const filled = (rescued.board & (1n << BigInt(cell))) !== 0n;
+      if (!filled) expect(rescued.colors[cell]).toBe(0);
+    }
+    expect(rescued.gems & ~rescued.board).toBe(EMPTY_BOARD);
+    expect(rescued.stars & ~rescued.board).toBe(EMPTY_BOARD);
+  });
+
+  it('is earned back by sweeping the board clean', () => {
+    const s = makeState({
+      board: boardFromRows(['#######.', ...Array(7).fill('........')]),
+      tray: [slot(ONE), null, null],
+      keys: 0,
+    });
+    const swept = reducer(s, { type: 'place', source: 'tray', index: 0, x: 7, y: 0 });
+    expect(swept.lastEvent?.sweptClean).toBe(true);
+    expect(swept.keys).toBe(1);
+  });
+
+  it('survives a round trip through serialize', () => {
+    const rescued = reducer(stuck(), { type: 'key' });
+    expect(JSON.parse(serialize(rescued)).keys).toBe(0);
   });
 });
 

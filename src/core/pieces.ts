@@ -49,6 +49,12 @@ const rect = (w: number, h: number): Array<readonly [number, number]> => {
 // game feel generous or stingy. Skewed toward chunky pieces on purpose: a bag
 // full of dominoes and triominoes feels like scraps, and small pieces cannot
 // fill a row fast enough to keep lines clearing.
+//
+// Chunky is not the same as square, though, and the catalogue used to conflate
+// them: 2x2, 3x2 and 2x3 were the three heaviest entries. A 2-D block occupies
+// two or three rows at once and completes none of them, so a bag full of them
+// fills the board evenly and clears nothing. On an eight-wide board what closes
+// a row is a *line*, so the line families now outweigh the rectangles.
 const SPECS: Spec[] = [
   // A get-out-of-jail card, not a crutch.
   { name: '1x1', family: 'single', cells: rect(1, 1), weight: 2 },
@@ -56,30 +62,30 @@ const SPECS: Spec[] = [
   { name: '2x1', family: 'domino', cells: rect(2, 1), weight: 5 },
   { name: '1x2', family: 'domino', cells: rect(1, 2), weight: 5 },
 
-  { name: '3x1', family: 'line3', cells: rect(3, 1), weight: 9 },
-  { name: '1x3', family: 'line3', cells: rect(1, 3), weight: 9 },
+  { name: '3x1', family: 'line3', cells: rect(3, 1), weight: 10 },
+  { name: '1x3', family: 'line3', cells: rect(1, 3), weight: 10 },
 
-  { name: '4x1', family: 'line4', cells: rect(4, 1), weight: 8 },
-  { name: '1x4', family: 'line4', cells: rect(1, 4), weight: 8 },
+  { name: '4x1', family: 'line4', cells: rect(4, 1), weight: 10 },
+  { name: '1x4', family: 'line4', cells: rect(1, 4), weight: 10 },
 
   // Half a row in one piece — the workhorse of a big clear.
-  { name: '5x1', family: 'line5', cells: rect(5, 1), weight: 7 },
-  { name: '1x5', family: 'line5', cells: rect(1, 5), weight: 7 },
+  { name: '5x1', family: 'line5', cells: rect(5, 1), weight: 9 },
+  { name: '1x5', family: 'line5', cells: rect(1, 5), weight: 9 },
 
-  { name: '2x2', family: 'square', cells: rect(2, 2), weight: 10 },
+  { name: '2x2', family: 'square', cells: rect(2, 2), weight: 9 },
 
-  { name: '3x2', family: 'rect', cells: rect(3, 2), weight: 10 },
-  { name: '2x3', family: 'rect', cells: rect(2, 3), weight: 10 },
+  { name: '3x2', family: 'rect', cells: rect(3, 2), weight: 7 },
+  { name: '2x3', family: 'rect', cells: rect(2, 3), weight: 7 },
 
-  { name: '4x2', family: 'rect', cells: rect(4, 2), weight: 5 },
-  { name: '2x4', family: 'rect', cells: rect(2, 4), weight: 5 },
+  { name: '4x2', family: 'rect', cells: rect(4, 2), weight: 3 },
+  { name: '2x4', family: 'rect', cells: rect(2, 4), weight: 3 },
 
-  { name: '3x3', family: 'bigsquare', cells: rect(3, 3), weight: 5 },
+  { name: '3x3', family: 'bigsquare', cells: rect(3, 3), weight: 3 },
 
   // The heavyweights. Rare, but they exist, and landing one is an event.
-  { name: '4x3', family: 'bigsquare', cells: rect(4, 3), weight: 2 },
-  { name: '3x4', family: 'bigsquare', cells: rect(3, 4), weight: 2 },
-  { name: '4x4', family: 'bigsquare', cells: rect(4, 4), weight: 2 },
+  { name: '4x3', family: 'bigsquare', cells: rect(4, 3), weight: 1 },
+  { name: '3x4', family: 'bigsquare', cells: rect(3, 4), weight: 1 },
+  { name: '4x4', family: 'bigsquare', cells: rect(4, 4), weight: 1 },
 
   // L-triomino — 2×2 minus one cell, all four corners.
   { name: 'L3-a', family: 'ltri', cells: [[0, 0], [1, 0], [0, 1]], weight: 6 },

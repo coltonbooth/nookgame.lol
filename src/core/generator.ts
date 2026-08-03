@@ -59,11 +59,21 @@ const SNUG_PULL = 0.9;
  * finishers on a short leash lets pressure build, and paying heavily for
  * multi-line finishers means the piece that cashes three rows in at once shows
  * up when it has been earned.
+ *
+ * These used to be 2.2 and 2.4, which is the same number twice: a one-line
+ * finisher was weighted x3.2 and a two-line finisher x3.4. The comment above
+ * described a short leash the constants did not implement, and the measured
+ * result was that 93% of all clears were singles while a double was reachable
+ * in half of all deals. The gap between these two values is the mechanism.
  */
-const SINGLE_LINE_PULL = 2.2;
-const MULTI_LINE_PULL = 2.4;
-/** How hard to favour pieces that bring lines to the brink without finishing. */
-const PRIME_PULL = 0.6;
+const SINGLE_LINE_PULL = 0.9;
+const MULTI_LINE_PULL = 4.5;
+/**
+ * How hard to favour pieces that bring lines to the brink without finishing.
+ * Priming is the only signal in here that *builds* a combo rather than cashing
+ * one, so it carries real weight now.
+ */
+const PRIME_PULL = 1.5;
 
 function lineValue(completes: number): number {
   if (completes <= 0) return 0;
@@ -82,9 +92,23 @@ const LAYOUT_MIN_OPENNESS = 0.32;
 const MAX_ATTEMPTS = 16;
 /** Node ceiling for one solvability search. Typical searches use under 50. */
 const SOLVE_BUDGET = 4000;
+/**
+ * Tighter ceiling for the payoff search, which asks for the *best* ordering
+ * rather than the first workable one and so explores more of the tree. It runs
+ * up to sixteen times per deal, hence the smaller number.
+ */
+const PAYOFF_BUDGET = 900;
 
-/** Score at which mercy has fully decayed. The game hardens as you improve. */
-export const MERCY_SPAN = 30000;
+/**
+ * How far into a run mercy has fully decayed. The game hardens as you last.
+ *
+ * Measured in placements, not points, and that matters: mercy used to decay
+ * against the score, which silently coupled difficulty to the scoring table.
+ * Any change that made clears pay more would have made the game harder as a
+ * side effect. Placements measure what this actually wants to know — how deep
+ * into a run the player is.
+ */
+export const MERCY_SPAN = 250;
 export const MERCY_FLOOR = 0.15;
 
 export interface DealContext {
@@ -92,7 +116,10 @@ export interface DealContext {
   readonly nook: PieceId | null;
   /** Last two deals, flattened: [0..2] most recent, [3..5] the one before. */
   readonly recentShapes: readonly PieceId[];
-  readonly score: number;
+  /** Placements so far. Drives the mercy decay. */
+  readonly progress: number;
+  /** Deals since the last clear of two or more lines. Drives the pity timer. */
+  readonly dealsSinceCombo: number;
   /** Fair Deal turns off all adaptive assistance. */
   readonly fairDeal: boolean;
 }
@@ -102,9 +129,9 @@ export interface DealResult {
   readonly rngState: RngState;
 }
 
-/** Assistance strength, decaying to a floor as the score rises. */
-export function mercyFor(score: number): number {
-  const m = 1 - score / MERCY_SPAN;
+/** Assistance strength, decaying to a floor as a run goes on. */
+export function mercyFor(placements: number): number {
+  const m = 1 - placements / MERCY_SPAN;
   return Math.max(MERCY_FLOOR, Math.min(1, m));
 }
 
@@ -146,7 +173,7 @@ const MAX_PIECE_SPAN = 5;
 /** A line this close is worth building toward even if nothing can finish it yet. */
 const BUILDABLE_MISSING = 7;
 /** After a placement, a line left needing this few is primed for a combo. */
-const PRIMED_MISSING = 2;
+const PRIMED_MISSING = 3;
 
 /** Masks of the cells still missing from each line within `limit` of full. */
 function lineGaps(board: Board, limit: number): bigint[] {
@@ -313,25 +340,127 @@ export function generateLayout(
   return { board, colors, rngState: rng };
 }
 
-/** Place, then clear any completed lines. The board a player would end up with. */
-function simulate(board: Board, mask: bigint): Board {
-  const placed = place(board, mask);
-  const lines = fullLines(placed);
-  if (lines.rows.length === 0 && lines.cols.length === 0) return placed;
-  return clearLines(placed, lines);
-}
-
 /** Layer 2: is at least one of these placeable on the board as it stands? */
 export function hasAnyFit(board: Board, ids: readonly PieceId[]): boolean {
   return ids.some((id) => fitsAnywhere(board, id));
 }
 
 /**
- * Layer 3: can *some* ordering of `ids` be placed in full? Line clears are
- * simulated between placements because clearing opens space. The Nook's piece
- * may optionally be spent at any point — it only ever adds outs.
+ * What a hand can actually *do*, not merely whether it fits.
  *
- * Returns false if the node budget runs out, which just means "redeal".
+ * `bestTotal` and `bestBurst` are measured only along orderings that place
+ * every piece, because "you could clear a line if you abandon a piece" is not
+ * an offer worth making. A hand that clears but strands a piece falls to the
+ * merely-fits tier instead.
+ */
+export interface SequenceOutcome {
+  /** Some ordering places every piece. The old solvability question. */
+  readonly placedAll: boolean;
+  /** Most lines cleared across a whole sequence. */
+  readonly bestTotal: number;
+  /** Most lines cleared by a single placement — the combo signal. */
+  readonly bestBurst: number;
+}
+
+const NOTHING: SequenceOutcome = {
+  placedAll: false,
+  bestTotal: 0,
+  bestBurst: 0,
+};
+const ALL_PLACED: SequenceOutcome = {
+  placedAll: true,
+  bestTotal: 0,
+  bestBurst: 0,
+};
+
+/** Bursts first, then total lines. A double beats two singles. */
+function better(a: SequenceOutcome, b: SequenceOutcome): SequenceOutcome {
+  if (a.placedAll !== b.placedAll) return a.placedAll ? a : b;
+  if (a.bestBurst !== b.bestBurst) return a.bestBurst > b.bestBurst ? a : b;
+  return a.bestTotal >= b.bestTotal ? a : b;
+}
+
+/**
+ * Layer 3, generalised. Searches orderings of `ids`, clearing lines between
+ * placements because clearing opens space, and optionally spending the Nook's
+ * piece at any point — it only ever adds outs.
+ *
+ * Stops as soon as it finds a complete ordering reaching `targetBurst`, so
+ * `targetBurst = 0` costs exactly what the old first-solution search cost.
+ * Running out of budget returns the best found so far; a lower bound only ever
+ * under-rates a hand, which is the safe direction to be wrong in.
+ */
+export function exploreSequence(
+  board: Board,
+  ids: readonly PieceId[],
+  nook: PieceId | null = null,
+  targetBurst = 0,
+  budget: number = SOLVE_BUDGET,
+): SequenceOutcome {
+  let nodes = budget;
+  const seen = new Map<string, SequenceOutcome>();
+
+  const search = (
+    b: Board,
+    remaining: number,
+    nookLeft: boolean,
+  ): SequenceOutcome => {
+    if (remaining === 0) return ALL_PLACED;
+    if (--nodes <= 0) return NOTHING;
+
+    const key = `${b.toString(36)}:${remaining}:${nookLeft ? 1 : 0}`;
+    const memo = seen.get(key);
+    if (memo) return memo;
+
+    let best = NOTHING;
+
+    const step = (mask: bigint, nextRemaining: number, nextNook: boolean): boolean => {
+      const placed = place(b, mask);
+      const lines = fullLines(placed);
+      const cleared = lines.rows.length + lines.cols.length;
+      const nextBoard = cleared > 0 ? clearLines(placed, lines) : placed;
+
+      const sub = search(nextBoard, nextRemaining, nextNook);
+      if (sub.placedAll) {
+        best = better(best, {
+          placedAll: true,
+          bestTotal: cleared + sub.bestTotal,
+          bestBurst: Math.max(cleared, sub.bestBurst),
+        });
+        if (best.bestBurst >= targetBurst) return true;
+      }
+      return false;
+    };
+
+    for (let i = 0; i < ids.length; i++) {
+      if ((remaining & (1 << i)) === 0) continue;
+      for (const pl of PLACEMENTS[ids[i]!]!) {
+        if ((b & pl.mask) !== 0n) continue;
+        if (step(pl.mask, remaining & ~(1 << i), nookLeft)) return best;
+        if (nodes <= 0) return best;
+      }
+    }
+
+    if (nookLeft && nook !== null) {
+      for (const pl of PLACEMENTS[nook]!) {
+        if ((b & pl.mask) !== 0n) continue;
+        if (step(pl.mask, remaining, false)) return best;
+        if (nodes <= 0) return best;
+      }
+    }
+
+    // A budget-exhausted result is a lower bound, not an answer — memoising it
+    // would poison every later path that reaches the same board.
+    if (nodes > 0) seen.set(key, best);
+    return best;
+  };
+
+  return search(board, (1 << ids.length) - 1, nook !== null);
+}
+
+/**
+ * Layer 3: can *some* ordering of `ids` be placed in full? The original
+ * question, now a thin reading of `exploreSequence`.
  */
 export function isSolvableSequence(
   board: Board,
@@ -339,40 +468,7 @@ export function isSolvableSequence(
   nook: PieceId | null = null,
   budget: number = SOLVE_BUDGET,
 ): boolean {
-  let nodes = budget;
-  const seen = new Set<string>();
-
-  const search = (b: Board, remaining: number, nookLeft: boolean): boolean => {
-    if (remaining === 0) return true;
-    if (--nodes <= 0) return false;
-
-    const key = `${b.toString(36)}:${remaining}:${nookLeft ? 1 : 0}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-
-    for (let i = 0; i < ids.length; i++) {
-      if ((remaining & (1 << i)) === 0) continue;
-      for (const pl of PLACEMENTS[ids[i]!]!) {
-        if ((b & pl.mask) !== 0n) continue;
-        if (search(simulate(b, pl.mask), remaining & ~(1 << i), nookLeft)) {
-          return true;
-        }
-        if (nodes <= 0) return false;
-      }
-    }
-
-    if (nookLeft && nook !== null) {
-      for (const pl of PLACEMENTS[nook]!) {
-        if ((b & pl.mask) !== 0n) continue;
-        if (search(simulate(b, pl.mask), remaining, false)) return true;
-        if (nodes <= 0) return false;
-      }
-    }
-
-    return false;
-  };
-
-  return search(board, (1 << ids.length) - 1, nook !== null);
+  return exploreSequence(board, ids, nook, 0, budget).placedAll;
 }
 
 /**
@@ -401,13 +497,13 @@ export function isSolvableSequence(
  */
 export function dealWeights(
   board: Board,
-  score: number,
+  progress: number,
   fairDeal: boolean,
 ): number[] {
   const base = PIECES.map((p) => p.weight);
   if (fairDeal) return base;
 
-  const mercy = mercyFor(score);
+  const mercy = mercyFor(progress);
   if (mercy < ASSIST_FLOOR) return base;
 
   // Two different jobs, and they must not share a gate.
@@ -429,7 +525,7 @@ export function dealWeights(
     // Could it finish lines right now, and how many at once?
     const lines = 1 + mercy * lineValue(fit.completes[i]!);
     // Or bring lines to the brink, so a combo becomes possible at all.
-    const priming = 1 + mercy * PRIME_PULL * Math.min(fit.primes[i]!, 3);
+    const priming = 1 + mercy * PRIME_PULL * Math.min(fit.primes[i]!, 4);
     // Longer pieces, capped at 5 so the 3x3 doesn't run away with it.
     const size = 1 + shapeAssist * SIZE_PULL * (Math.min(p.size, 5) - 3);
     // Does it slot into the shape of a hole, rather than just fitting somewhere?
@@ -513,17 +609,45 @@ function repairHand(
 }
 
 /**
- * Deal a set of three. Tries hands until one is both immediately playable and
- * fully solvable in some order, then falls back to merely playable, then to a
- * repaired hand. If nothing in the catalogue fits at all the run is already
- * over, and the reducer's end check will say so.
+ * How many combo-less deals before the generator goes looking for a hand that
+ * can produce a double. Small, because a drought is felt quickly.
+ */
+const COMBO_PITY = 3;
+
+/** Hand quality, best first. `dealThree` keeps the best tier it has seen. */
+const enum Tier {
+  Combo = 0,
+  Clears = 1,
+  Solvable = 2,
+  Fits = 3,
+  None = 4,
+}
+
+/**
+ * Deal a set of three, and take the best hand of several rather than the first
+ * acceptable one.
+ *
+ * The old bar was "can all three be placed?", which guarantees survival and
+ * nothing else — a hand of three pieces that merely fill the board passes it.
+ * Players do not complain about dying; they complain about not clearing. So the
+ * bar is now what the hand can *do*, and a hand that can finish a line outranks
+ * one that can only be placed.
+ *
+ * After `COMBO_PITY` deals without a double the target rises to a burst of two,
+ * so a drought actively ends rather than waiting for the weights to fix it.
  */
 export function dealThree(ctx: DealContext, rngState: RngState): DealResult {
-  const weights = dealWeights(ctx.board, ctx.score, ctx.fairDeal);
+  const weights = dealWeights(ctx.board, ctx.progress, ctx.fairDeal);
   const repeated = repeatedShapes(ctx.recentShapes);
 
+  // Nothing can clear on an open board, so don't pay for a payoff search that
+  // is guaranteed to come back empty.
+  const reachable = anyNearlyFull(ctx.board);
+  const target = ctx.dealsSinceCombo >= COMBO_PITY ? 2 : 1;
+
   let state = rngState;
-  let playable: [PieceId, PieceId, PieceId] | null = null;
+  let best: [PieceId, PieceId, PieceId] | null = null;
+  let bestTier: Tier = Tier.None;
   let last: [PieceId, PieceId, PieceId] = [0, 0, 0];
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
@@ -532,14 +656,30 @@ export function dealThree(ctx: DealContext, rngState: RngState): DealResult {
     last = ids;
 
     if (!hasAnyFit(ctx.board, ids)) continue;
-    if (playable === null) playable = ids;
 
-    if (isSolvableSequence(ctx.board, ids, ctx.nook)) {
-      return { pieces: ids, rngState: state };
+    let tier = Tier.Fits;
+    if (reachable) {
+      const reach = exploreSequence(ctx.board, ids, ctx.nook, target, PAYOFF_BUDGET);
+      if (reach.placedAll) {
+        tier =
+          reach.bestBurst >= target
+            ? Tier.Combo
+            : reach.bestTotal >= 1
+              ? Tier.Clears
+              : Tier.Solvable;
+      }
+    } else if (isSolvableSequence(ctx.board, ids, ctx.nook)) {
+      tier = Tier.Solvable;
+    }
+
+    if (tier < bestTier) {
+      bestTier = tier;
+      best = ids;
+      if (tier === Tier.Combo) break;
     }
   }
 
-  if (playable !== null) return { pieces: playable, rngState: state };
+  if (best !== null) return { pieces: best, rngState: state };
 
   const [repaired, next] = repairHand(ctx.board, last, weights, state);
   return { pieces: repaired, rngState: next };

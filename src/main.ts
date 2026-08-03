@@ -41,7 +41,7 @@ import {
   recordDailyBest,
   recordLevelCleared,
 } from './platform/storage';
-import { praiseFor } from './render/effects';
+import { praiseFor, praiseIsHot } from './render/effects';
 import { Renderer } from './render/renderer';
 import { Hud, describePlacement } from './ui/hud';
 import { EndPanel, GoalChips, ModeTabs, type Mode } from './ui/panels';
@@ -55,6 +55,7 @@ const panel = new EndPanel({
   onShare: share,
   onCopy: copyResult,
   onNextLevel: advanceLevel,
+  onUseKey: useKey,
 });
 const tabs = new ModeTabs(setMode);
 const chips = new GoalChips();
@@ -183,6 +184,7 @@ function celebrate(event: NonNullable<GameState['lastEvent']>): void {
       originX: event.x,
       originY: event.y,
       lines,
+      run: state.run,
     },
     renderer.layout,
     performance.now(),
@@ -193,13 +195,15 @@ function celebrate(event: NonNullable<GameState['lastEvent']>): void {
   soundClear(lines, state.run);
 
   const now = performance.now();
+  renderer.effects.score(event.gained, event.x, event.y, now);
+
   if (event.sweptClean) {
     renderer.effects.say('swept clean', now, true);
   } else if (event.unlockedNook) {
     renderer.effects.say('the nook is yours', now, true);
   } else {
     const praise = praiseFor(lines, state.run);
-    if (praise) renderer.effects.say(praise, now, lines >= 3 || state.run >= 4);
+    if (praise) renderer.effects.say(praise, now, praiseIsHot(lines, state.run));
   }
 
   if (event.unlockedNook) {
@@ -241,6 +245,7 @@ function end(): void {
         : {}),
       canAdvance: false,
       restartLabel: mode === 'levels' ? 'try again' : 'again',
+      keys: state.keys,
     });
   }, ENDING_MS);
 }
@@ -341,6 +346,45 @@ async function share(): Promise<void> {
 async function copyResult(): Promise<void> {
   const ok = await copyToClipboard(resultText());
   panel.says(ok ? 'copied.' : 'select the text above and copy it.');
+}
+
+/**
+ * Spend a Key and carry on. The run keeps its score and its streak — this is a
+ * rescue, not a restart, and that distinction is the whole value of the thing.
+ */
+function useKey(): void {
+  const before = state;
+  state = reducer(state, { type: 'key' });
+  if (state === before || state.status !== 'playing') return;
+
+  panel.hide();
+  endingStart = -1;
+  dirty = true;
+  drag.cancel();
+  keyboard.reset();
+  keyboard.syncTo(state);
+  hud.render(state);
+
+  const event = state.keyEvent;
+  const now = performance.now();
+  if (event && event.cells.length > 0) {
+    renderer.effects.spawn(
+      {
+        cells: event.cells,
+        // No placement to radiate from, so the wave starts at the middle.
+        originX: 3,
+        originY: 3,
+        lines: event.lines,
+        run: 0,
+      },
+      renderer.layout,
+      now,
+    );
+  }
+  renderer.effects.say('room to breathe', now, true);
+  soundUnlock();
+  tapUnlock();
+  hud.announce(`key spent. ${event?.lines ?? 0} lines cleared.`);
 }
 
 function restart(): void {

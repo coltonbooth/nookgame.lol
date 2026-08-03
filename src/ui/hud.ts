@@ -2,19 +2,26 @@
 // rendering and accessibility are things the browser is already good at.
 
 import type { GameState } from '../core/game';
-import { MAX_RUN_MULTIPLIER } from '../core/scoring';
+import { MAX_RUN_MULTIPLIER, runMultiplier } from '../core/scoring';
 
-/** Nine steps takes the multiplier from x1 to the x5 cap. */
-const RUN_DOTS = (MAX_RUN_MULTIPLIER - 1) / 0.5 + 1;
+/** Clears needed to take the multiplier from x1 to the cap. */
+const RUN_DOTS = (() => {
+  let run = 1;
+  while (runMultiplier(run) < MAX_RUN_MULTIPLIER && run < 32) run++;
+  return run;
+})();
 
 /** How long the counter takes to catch up. Long enough to read as motion. */
 const ROLL_MS = 420;
 
 export class Hud {
   private readonly score: HTMLElement;
+  private readonly multiplier: HTMLElement;
+  private readonly keys: HTMLElement;
   private readonly dots: HTMLElement[] = [];
   private readonly announcer: HTMLElement;
   private shownRun = -1;
+  private shownKeys = -1;
 
   /** The counter lags the real score and chases it — see `update`. */
   private displayed = 0;
@@ -25,6 +32,8 @@ export class Hud {
 
   constructor(root: ParentNode = document) {
     this.score = must(root, '#score');
+    this.multiplier = must(root, '#multiplier');
+    this.keys = must(root, '#keys');
     this.announcer = must(root, '#announcer');
 
     const indicator = must(root, '#run-indicator');
@@ -45,8 +54,32 @@ export class Hud {
       this.rollStart = performance.now();
     }
     if (state.run !== this.shownRun) {
+      const climbed = state.run > this.shownRun;
       this.shownRun = state.run;
       this.dots.forEach((dot, i) => dot.classList.toggle('lit', i < state.run));
+
+      // The multiplier was doing real work and no player could see it. Showing
+      // the number is most of what makes a streak feel like one.
+      const m = runMultiplier(state.run);
+      this.multiplier.textContent = `×${m}`;
+      this.multiplier.classList.toggle('is-on', state.run > 0);
+      this.multiplier.classList.toggle('is-max', m >= MAX_RUN_MULTIPLIER);
+
+      // Retrigger the pulse: removing and forcing a reflow is the only
+      // reliable way to restart a CSS animation on an element that still has
+      // the class from last time.
+      if (climbed && state.run > 0) {
+        this.multiplier.classList.remove('bump');
+        void this.multiplier.offsetWidth;
+        this.multiplier.classList.add('bump');
+      }
+    }
+
+    if (state.keys !== this.shownKeys) {
+      this.shownKeys = state.keys;
+      this.keys.hidden = state.keys <= 0;
+      this.keys.textContent =
+        state.keys === 1 ? 'a key' : `${state.keys} keys`;
     }
   }
 

@@ -19,6 +19,9 @@ import {
   place,
   popcount,
   CELLS,
+  COL,
+  N,
+  ROW,
   type Board,
   type FullLines,
 } from './board';
@@ -155,6 +158,12 @@ export interface GameState {
   readonly swapUsed: boolean;
   readonly score: number;
   readonly run: number;
+  /** Non-clearing placements the run survives before it decays. */
+  readonly runGrace: number;
+  /** Rescues in hand. Spent from the game-over screen to carry on. */
+  readonly keys: number;
+  /** What the last spent Key cleared. Drives its pop, same as a line clear. */
+  readonly keyEvent: KeyEvent | null;
   readonly status: 'playing' | 'over';
   readonly rngState: RngState;
   readonly dealCount: number;
@@ -167,7 +176,23 @@ export interface GameState {
 
 export type Action =
   | { type: 'place'; source: Source; index: number; x: number; y: number }
-  | { type: 'stash'; index: number };
+  | { type: 'stash'; index: number }
+  | { type: 'key' };
+
+/**
+ * Lines a Key clears at minimum. It keeps going past this if it has to, so the
+ * promise "a Key always gets you moving again" is a guarantee rather than a
+ * hope — see `doKey`.
+ */
+export const KEY_LINES = 3;
+/** Keys a run starts with. */
+export const STARTING_KEYS = 1;
+
+/** What spending a Key wiped, so the renderer can pop it like any other clear. */
+export interface KeyEvent {
+  readonly cells: readonly ClearedCell[];
+  readonly lines: number;
+}
 
 export interface NewGameOptions {
   readonly seed: RngState;
@@ -187,6 +212,8 @@ export interface NewGameOptions {
    * the endless rate only ever produces three or four.
    */
   readonly markerOneIn?: number;
+  /** Rescues the run starts with. Defaults to `STARTING_KEYS`. */
+  readonly keys?: number;
 }
 
 export function createGame(options: NewGameOptions): GameState {
@@ -209,6 +236,9 @@ export function createGame(options: NewGameOptions): GameState {
     swapUsed: false,
     score: 0,
     run: 0,
+    runGrace: 0,
+    keys: options.keys ?? STARTING_KEYS,
+    keyEvent: null,
     status: 'playing',
     // The layout consumes part of the stream, so deals carry on from there.
     rngState: layout?.rngState ?? seed,
@@ -252,6 +282,20 @@ export function markerAt(
 const trayEmpty = (tray: ReadonlyArray<Slot | null>): boolean =>
   tray.every((s) => s === null);
 
+/**
+ * How long since the player last cleared two lines at once. `dealClears`
+ * already records the best clear of every deal in order, so the drought is
+ * derivable and needs no state of its own.
+ */
+function dealsSinceCombo(dealClears: readonly number[]): number {
+  let n = 0;
+  for (let i = dealClears.length - 1; i >= 0; i--) {
+    if (dealClears[i]! >= 2) break;
+    n++;
+  }
+  return n;
+}
+
 /** Deal three. Only ever called with an empty tray; the Nook does not block it. */
 function deal(state: GameState): GameState {
   const result = dealThree(
@@ -259,7 +303,8 @@ function deal(state: GameState): GameState {
       board: state.board,
       nook: state.nook?.piece ?? null,
       recentShapes: state.recentShapes,
-      score: state.score,
+      progress: state.stats.placements,
+      dealsSinceCombo: dealsSinceCombo(state.stats.dealClears),
       fairDeal: state.fairDeal,
     },
     state.rngState,
@@ -382,7 +427,12 @@ function resolve(
     gemsCleared,
     starsCleared,
     unlockedNook,
-    turn: scoreTurn(piece(slot.piece).size, clearedCount, state.run, starsCleared),
+    turn: scoreTurn(
+      piece(slot.piece).size,
+      clearedCount,
+      { run: state.run, grace: state.runGrace },
+      starsCleared,
+    ),
   };
 }
 
@@ -454,7 +504,94 @@ export function reducer(state: GameState, action: Action): GameState {
       return doPlace(state, action.source, action.index, action.x, action.y);
     case 'stash':
       return doStash(state, action.index);
+    case 'key':
+      return doKey(state);
   }
+}
+
+/** Every row and column, most nearly full first. Ties break by index. */
+function linesByFullness(board: Board): bigint[] {
+  const lines: Array<{ mask: bigint; filled: number }> = [];
+  for (let y = 0; y < N; y++) {
+    const mask = ROW(y);
+    lines.push({ mask, filled: popcount(board & mask) });
+  }
+  for (let x = 0; x < N; x++) {
+    const mask = COL(x);
+    lines.push({ mask, filled: popcount(board & mask) });
+  }
+  // Stable sort, so equally full lines always clear in the same order and a
+  // replay lands on the same board.
+  return lines
+    .map((line, i) => ({ ...line, i }))
+    .sort((a, b) => b.filled - a.filled || a.i - b.i)
+    .map((line) => line.mask);
+}
+
+/**
+ * Spend a Key: the rescue named in `plan.md`'s vocabulary and never built.
+ *
+ * Only legal from a finished run, which is what keeps it out of the normal
+ * loop entirely — the end check that set `status` to 'over' is untouched, and
+ * so is every path that leads to it.
+ *
+ * It clears whole lines, worst-affected first, and keeps clearing past the
+ * minimum until the pieces in hand actually fit. A Key that failed to rescue
+ * you would be worse than no Key at all.
+ *
+ * Deliberately pays nothing and does not advance the run: a rescue that scored
+ * would make dying on purpose a strategy.
+ */
+function doKey(state: GameState): GameState {
+  if (state.status !== 'over' || state.keys <= 0) return state;
+
+  const colors = Uint8Array.from(state.colors);
+  let board = state.board;
+  let gems = state.gems;
+  let stars = state.stars;
+  let cleared = 0;
+
+  const clearedCells: ClearedCell[] = [];
+
+  for (const mask of linesByFullness(state.board)) {
+    const alreadyClear = (board & mask) === 0n;
+    if (cleared >= KEY_LINES && anyLegalMove({ ...state, board })) break;
+    if (alreadyClear) continue;
+
+    for (let cell = 0; cell < CELLS; cell++) {
+      const bitAt = 1n << BigInt(cell);
+      if ((mask & bitAt) === 0n || (board & bitAt) === 0n) continue;
+      if (colors[cell] !== 0) {
+        clearedCells.push({
+          cell,
+          color: colors[cell]!,
+          hadMarker: ((gems | stars) & bitAt) !== 0n,
+        });
+      }
+      colors[cell] = 0;
+    }
+
+    board &= ~mask;
+    gems &= ~mask;
+    stars &= ~mask;
+    cleared++;
+  }
+
+  const next: GameState = {
+    ...state,
+    board,
+    colors,
+    gems,
+    stars,
+    keys: state.keys - 1,
+    status: 'playing',
+    lastEvent: null,
+    keyEvent: { cells: clearedCells, lines: cleared },
+  };
+
+  // If even that left nothing playable the run really is finished, and the end
+  // check says so rather than handing back a dead board.
+  return withEndCheck(next);
 }
 
 function doPlace(
@@ -523,7 +660,7 @@ function doPlace(
     tray,
     nook,
     stats: {
-      bestRun: Math.max(state.stats.bestRun, turn.nextRun),
+      bestRun: Math.max(state.stats.bestRun, turn.next.run),
       sweptClean: state.stats.sweptClean + (board === EMPTY_BOARD ? 1 : 0),
       linesCleared: state.stats.linesCleared + cleared,
       placements: state.stats.placements + 1,
@@ -532,8 +669,12 @@ function doPlace(
       dealClears,
     },
     nookUnlocked: state.nookUnlocked || unlockedNook,
+    // Sweeping the board clean earns the next rescue. The hardest thing in the
+    // game pays for the thing that saves you from the worst thing in the game.
+    keys: state.keys + (board === EMPTY_BOARD ? 1 : 0),
     score: state.score + turn.total,
-    run: turn.nextRun,
+    run: turn.next.run,
+    runGrace: turn.next.grace,
     lastEvent: {
       source,
       piece: slot.piece,
@@ -603,6 +744,8 @@ export function serialize(state: GameState): string {
     swapUsed: state.swapUsed,
     score: state.score,
     run: state.run,
+    runGrace: state.runGrace,
+    keys: state.keys,
     status: state.status,
     rngState: state.rngState,
     dealCount: state.dealCount,

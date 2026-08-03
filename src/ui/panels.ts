@@ -12,6 +12,7 @@ export interface PanelHandlers {
   onShare(): void;
   onCopy(): void;
   onNextLevel(): void;
+  onUseKey(): void;
 }
 
 /** What to show when a run stops. */
@@ -22,6 +23,8 @@ export interface PanelView {
   readonly bestLabel: string;
   readonly canAdvance: boolean;
   readonly restartLabel: string;
+  /** Keys in hand. Above zero, the run doesn't have to end here. */
+  readonly keys?: number;
   /** The shareable result, shown verbatim so it can always be copied by hand. */
   readonly result?: string;
   /** Whether an OS share sheet is worth offering alongside copy. */
@@ -40,6 +43,7 @@ export class EndPanel {
   private readonly next: HTMLButtonElement;
   private readonly result: HTMLElement;
   private readonly restart: HTMLButtonElement;
+  private readonly useKey: HTMLButtonElement;
   private readonly note: HTMLElement;
 
   constructor(handlers: PanelHandlers, root: ParentNode = document) {
@@ -54,12 +58,14 @@ export class EndPanel {
     this.copy = must(root, '#copy') as HTMLButtonElement;
     this.next = must(root, '#next-level') as HTMLButtonElement;
     this.restart = must(root, '#restart') as HTMLButtonElement;
+    this.useKey = must(root, '#use-key') as HTMLButtonElement;
     this.result = must(root, '#share-result');
 
     this.restart.addEventListener('click', handlers.onRestart);
     this.share.addEventListener('click', handlers.onShare);
     this.copy.addEventListener('click', handlers.onCopy);
     this.next.addEventListener('click', handlers.onNextLevel);
+    this.useKey.addEventListener('click', handlers.onUseKey);
   }
 
   show(view: PanelView): void {
@@ -74,6 +80,10 @@ export class EndPanel {
     this.result.hidden = result.length === 0;
     this.copy.hidden = result.length === 0;
     this.share.hidden = result.length === 0 || view.canShareSheet !== true;
+
+    const keys = view.keys ?? 0;
+    this.useKey.hidden = keys <= 0;
+    this.useKey.textContent = keys > 1 ? `use a key (${keys})` : 'use a key';
 
     this.next.hidden = !view.canAdvance;
     this.restart.textContent = view.restartLabel;

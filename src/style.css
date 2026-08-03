@@ -128,10 +128,49 @@ body {
 }
 
 #score-plate {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
   padding: 4px 18px;
   border-radius: 4px;
   border: 1px solid rgb(200 162 74 / 0.35);
   background: linear-gradient(180deg, #2b2f38, #22252c);
+}
+
+/* Dim at x1 so it reads as dormant rather than as decoration, and lights up
+   the moment a run starts. */
+.multiplier {
+  font-variant-numeric: tabular-nums;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: rgb(239 232 218 / 0.25);
+  transition: color 180ms ease;
+}
+
+.multiplier.is-on {
+  color: var(--enamel-saffron);
+}
+
+.multiplier.is-max {
+  color: var(--brass);
+  text-shadow: 0 0 10px rgb(200 162 74 / 0.55);
+}
+
+.multiplier.bump {
+  animation: multiplier-bump 320ms ease-out;
+}
+
+@keyframes multiplier-bump {
+  0% { transform: scale(1); }
+  35% { transform: scale(1.45); }
+  100% { transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .multiplier.bump {
+    animation: none;
+  }
 }
 
 .score-digits {
@@ -160,6 +199,21 @@ body {
 
 .run-dot.lit {
   background: var(--enamel-saffron);
+  border-color: var(--brass);
+}
+
+/* A key in hand, stated plainly. Knowing the rescue is there changes how a
+   tight board feels long before it's ever spent. */
+.keys {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: var(--brass);
+}
+
+.key-action {
+  color: #1a1d23;
+  background: var(--brass);
   border-color: var(--brass);
 }
 

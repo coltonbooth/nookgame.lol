@@ -15,11 +15,13 @@ import {
   soundClear,
   soundGameOver,
   soundInvalid,
+  soundJackpot,
   soundKey,
   soundLevelClear,
   soundNewBest,
   soundPickup,
   soundPlace,
+  soundRiser,
   soundStash,
   soundSweptClean,
   soundUnlock,
@@ -32,11 +34,13 @@ import {
   tapClear,
   tapGameOver,
   tapInvalid,
+  tapJackpot,
   tapPlace,
   tapStash,
   tapSweptClean,
   tapUnlock,
 } from './platform/haptics';
+import { jackpotReady } from './core/scoring';
 import {
   describeGoal,
   levelComplete,
@@ -232,8 +236,23 @@ if ('serviceWorker' in navigator && import.meta.env.PROD) {
   else window.addEventListener('load', registerWorker, { once: true });
 }
 
+/**
+ * Park the coach strip in the empty band between the score plate and the tray.
+ *
+ * That band is a canvas measurement, so CSS cannot find it on its own — the
+ * tray is drawn rather than laid out. Handing the midpoint over as a custom
+ * property is the smallest bridge between the two coordinate systems, and it
+ * keeps the strip off the tray pieces at every viewport size.
+ */
+function placeCoach(): void {
+  const l = renderer.layout;
+  const band = (l.plate.y + l.plate.h + l.nook.y) / 2;
+  coachEl.style.setProperty('--coach-y', `${canvas.offsetTop + band}px`);
+}
+
 new ResizeObserver(() => {
   renderer.resize();
+  placeCoach();
   dirty = true;
 }).observe(renderer.host);
 
@@ -361,6 +380,10 @@ const COACH_TIPS: ReadonlyArray<{
     text: 'clear a line through a gem to open the nook',
     done: (s) => s.nookUnlocked,
   },
+  {
+    text: 'fill the gold bar for the jackpot',
+    done: (s) => s.stats.jackpots > 0,
+  },
 ];
 
 let coachStep = loadCoach();
@@ -398,6 +421,9 @@ function celebrate(event: NonNullable<GameState['lastEvent']>): void {
   if (lines === 0) {
     tapPlace();
     soundPlace();
+    // The meter only ever moves on a clear, so a non-clearing placement is
+    // exactly when the player has time to notice how close it is getting.
+    armRiser();
     return;
   }
 
@@ -420,10 +446,21 @@ function celebrate(event: NonNullable<GameState['lastEvent']>): void {
   const now = performance.now();
   renderer.effects.score(event.gained, event.x, event.y, now);
 
+  // The jackpot outranks everything. It is the rarest and largest thing that
+  // can happen, so it takes the word, the burst and the reels — and the ordinary
+  // praise ladder stands down for the one placement it fires on.
+  if (event.jackpot) {
+    renderer.effects.jackpot(renderer.layout, now);
+    renderer.spinScore(state.score);
+    soundJackpot();
+    tapJackpot();
+    return;
+  }
+
   if (event.sweptClean) {
-    renderer.effects.say('swept clean', now, true);
+    renderer.effects.say('SWEPT CLEAN', now, true);
   } else if (event.unlockedNook) {
-    renderer.effects.say('the nook is yours', now, true);
+    renderer.effects.say('NOOK UNLOCKED', now, true);
   } else {
     const praise = praiseFor(lines, state.run);
     if (praise) renderer.effects.say(praise, now, praiseIsHot(lines, state.run));
@@ -438,6 +475,25 @@ function celebrate(event: NonNullable<GameState['lastEvent']>): void {
   } else {
     tapClear(lines);
   }
+
+  armRiser();
+}
+
+/**
+ * The anticipation. Once the meter is within two lines of paying out, the
+ * machine starts spinning up between placements.
+ *
+ * Fired at most once per approach rather than on every placement: a ratchet
+ * that goes off three times a deal stops meaning "nearly" and starts meaning
+ * "nothing". The latch resets when the meter empties, which only happens when
+ * the jackpot actually lands.
+ */
+let riserArmed = false;
+
+function armRiser(): void {
+  const ready = jackpotReady(state.jackpot);
+  if (ready && !riserArmed) soundRiser();
+  riserArmed = ready;
 }
 
 /** The board drains to greyscale before the panel arrives. Let it land. */
@@ -611,7 +667,7 @@ function winLevel(): void {
   levelWon = true;
   const cleared = recordLevelCleared(level.number);
   soundLevelClear();
-  renderer.effects.say('level cleared', performance.now(), true);
+  renderer.effects.say('LEVEL CLEARED', performance.now(), true);
   hud.announce(`level ${level.number} cleared. score ${state.score}.`);
 
   window.setTimeout(() => {
@@ -734,7 +790,7 @@ function useKey(): void {
       now,
     );
   }
-  renderer.effects.say('room to breathe', now, true);
+  renderer.effects.say('BACK IN PLAY', now, true);
   soundKey();
   tapUnlock();
   hud.announce(`key spent. ${event?.lines ?? 0} lines cleared.`);
@@ -746,6 +802,7 @@ function restart(): void {
   // levels left the board rendering normally and silently swallowing every
   // placement until a reload.
   levelWon = false;
+  riserArmed = false;
   state = newGame();
   drag.cancel();
   keyboard.reset();
@@ -777,3 +834,4 @@ refreshTabs();
 renderer.resetScore(state.score);
 renderGoals();
 renderCoach();
+placeCoach();

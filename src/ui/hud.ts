@@ -20,7 +20,16 @@ export class Hud {
     this.announcer = must(root, '#announcer');
   }
 
-  /** Lowercase, plain, unbothered — same register as everything else. */
+  /**
+   * Lowercase and plain — deliberately *not* the register the rest of the game
+   * now uses.
+   *
+   * Everything visible shouts. A screen reader saying "JACKPOT!!!" is not
+   * exciting, it is just a synthesiser reading punctuation aloud, and the words
+   * that matter — how many lines, what the score is — get buried under it. The
+   * announcer's job is to be the fastest way to find out what happened, and
+   * that job is unchanged by the art direction.
+   */
   announce(message: string): void {
     this.announcer.textContent = message;
   }
@@ -48,6 +57,11 @@ export function describePlacement(state: GameState): string {
   if (event.chargesFired === 1) parts.push('flame. the space around it burned.');
   else if (event.chargesFired > 1) {
     parts.push(`${event.chargesFired} flames. the space around them burned.`);
+  }
+  // The payout is the largest single thing that can happen to a score, so it
+  // has to be said — but said, not shouted.
+  if (event.jackpot) {
+    parts.push(`jackpot. ${event.jackpotBonus.toLocaleString('en-US')} points.`);
   }
   if (state.run > 1) parts.push(`run x${event.multiplier}.`);
   parts.push(`score ${state.score.toLocaleString('en-US')}.`);

@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  JACKPOT_FULL,
+  JACKPOT_PAYOUT,
   MAX_RUN_MULTIPLIER,
   RUN_GRACE,
   advanceRun,
+  jackpotReady,
   lineBonus,
   placementPoints,
   runMultiplier,
@@ -10,8 +13,12 @@ import {
   type RunState,
 } from './scoring';
 
-/** A run of `n` with a full grace allowance. */
-const at = (run: number, grace = RUN_GRACE): RunState => ({ run, grace });
+/** A run of `n` with a full grace allowance and an empty jackpot meter. */
+const at = (run: number, grace = RUN_GRACE, jackpot = 0): RunState => ({
+  run,
+  grace,
+  jackpot,
+});
 
 describe('lineBonus', () => {
   it('matches the specified table', () => {
@@ -32,26 +39,33 @@ describe('lineBonus', () => {
 });
 
 describe('runMultiplier', () => {
-  it('pays from the very first clear of a streak', () => {
+  it('pays a whole point from the very first clear of a streak', () => {
     expect(runMultiplier(0)).toBe(1);
-    expect(runMultiplier(1)).toBe(1.75);
-    expect(runMultiplier(2)).toBe(2.5);
-    expect(runMultiplier(3)).toBe(3.25);
-    expect(runMultiplier(4)).toBe(4);
+    expect(runMultiplier(1)).toBe(2);
+    expect(runMultiplier(2)).toBe(3);
+    expect(runMultiplier(3)).toBe(4);
+    expect(runMultiplier(4)).toBe(5);
   });
 
-  it('caps at a streak a player could actually hold', () => {
-    expect(runMultiplier(6)).toBe(MAX_RUN_MULTIPLIER);
+  it('climbs all the way to the ceiling and stops there', () => {
+    expect(runMultiplier(9)).toBe(MAX_RUN_MULTIPLIER);
     expect(runMultiplier(50)).toBe(MAX_RUN_MULTIPLIER);
+  });
+
+  it('is always a whole number, which is what keeps totals integral', () => {
+    for (let run = 0; run <= 20; run++) {
+      expect(Number.isInteger(runMultiplier(run))).toBe(true);
+    }
   });
 });
 
 describe('advanceRun', () => {
   it('increments on any clear and refills the grace', () => {
-    expect(advanceRun(at(0), 1)).toEqual({ run: 1, grace: RUN_GRACE });
-    expect(advanceRun({ run: 3, grace: 0 }, 2)).toEqual({
+    expect(advanceRun(at(0), 1)).toEqual({ run: 1, grace: RUN_GRACE, jackpot: 1 });
+    expect(advanceRun(at(3, 0), 2)).toEqual({
       run: 4,
       grace: RUN_GRACE,
+      jackpot: 2,
     });
   });
 
@@ -62,9 +76,16 @@ describe('advanceRun', () => {
   });
 
   it('decays by one once the grace is spent, and never wipes', () => {
-    expect(advanceRun({ run: 7, grace: 0 }, 0)).toEqual({ run: 6, grace: 0 });
-    expect(advanceRun({ run: 1, grace: 0 }, 0)).toEqual({ run: 0, grace: 0 });
-    expect(advanceRun({ run: 0, grace: 0 }, 0)).toEqual({ run: 0, grace: 0 });
+    expect(advanceRun(at(7, 0), 0)).toEqual({ run: 6, grace: 0, jackpot: 0 });
+    expect(advanceRun(at(1, 0), 0)).toEqual({ run: 0, grace: 0, jackpot: 0 });
+    expect(advanceRun(at(0, 0), 0)).toEqual({ run: 0, grace: 0, jackpot: 0 });
+  });
+
+  it('never takes anything back off the jackpot meter', () => {
+    // The run decays; the bank does not. A meter you can lose is a meter you
+    // stop watching, and watching it is the entire mechanic.
+    expect(advanceRun(at(3, 0, 5), 0).jackpot).toBe(5);
+    expect(advanceRun(at(0, 0, 5), 0).jackpot).toBe(5);
   });
 
   it('makes a one-turn setup for a double beat cashing two singles', () => {
@@ -81,17 +102,17 @@ describe('advanceRun', () => {
 describe('scoreTurn', () => {
   it('scores one point per cell when nothing clears', () => {
     expect(placementPoints(5)).toBe(5);
-    const turn = scoreTurn(5, 0, { run: 4, grace: 0 });
+    const turn = scoreTurn(5, 0, at(4, 0));
     expect(turn.total).toBe(5);
     expect(turn.next.run).toBe(3); // decayed, not wiped
   });
 
   it('applies the multiplier to the bonus only, not the placement', () => {
-    // 4 cells, 2 lines, run was 1 -> run becomes 2 -> x2.5 on a 60 bonus.
+    // 4 cells, 2 lines, run was 1 -> run becomes 2 -> x3 on a 60 bonus.
     const turn = scoreTurn(4, 2, at(1));
     expect(turn.next.run).toBe(2);
-    expect(turn.multiplier).toBe(2.5);
-    expect(turn.total).toBe(4 + 150);
+    expect(turn.multiplier).toBe(3);
+    expect(turn.total).toBe(4 + 180);
   });
 
   it('keeps totals integral at every multiplier step', () => {
@@ -103,5 +124,55 @@ describe('scoreTurn', () => {
         }
       }
     }
+  });
+});
+
+describe('the jackpot meter', () => {
+  it('banks every cleared line and pays nothing until it is full', () => {
+    let state: RunState = at(0);
+    for (let i = 0; i < JACKPOT_FULL - 1; i++) {
+      const turn = scoreTurn(3, 1, state);
+      expect(turn.jackpotFired).toBe(false);
+      expect(turn.jackpotBonus).toBe(0);
+      state = turn.next;
+    }
+    expect(state.jackpot).toBe(JACKPOT_FULL - 1);
+  });
+
+  it('fires exactly once on the placement that fills it, then resets', () => {
+    const turn = scoreTurn(3, 1, at(0, RUN_GRACE, JACKPOT_FULL - 1));
+    expect(turn.jackpotFired).toBe(true);
+    expect(turn.next.jackpot).toBe(0);
+
+    // And the very next clear does not fire again off the back of it.
+    expect(scoreTurn(3, 1, turn.next).jackpotFired).toBe(false);
+  });
+
+  it('carries the overflow rather than throwing it away', () => {
+    // A triple that takes the meter from 10 to 13 leaves one line banked.
+    const turn = scoreTurn(3, 3, at(0, RUN_GRACE, JACKPOT_FULL - 2));
+    expect(turn.jackpotFired).toBe(true);
+    expect(turn.next.jackpot).toBe(1);
+  });
+
+  it('rides the run multiplier, so arriving hot is worth ten times arriving cold', () => {
+    const cold = scoreTurn(3, 1, at(0, RUN_GRACE, JACKPOT_FULL - 1));
+    const hot = scoreTurn(3, 1, at(20, RUN_GRACE, JACKPOT_FULL - 1));
+    expect(cold.jackpotBonus).toBe(JACKPOT_PAYOUT * 2);
+    expect(hot.jackpotBonus).toBe(JACKPOT_PAYOUT * MAX_RUN_MULTIPLIER);
+    expect(hot.total - cold.total).toBeGreaterThan(JACKPOT_PAYOUT * 7);
+  });
+
+  it('counts the payout inside the turn total', () => {
+    const turn = scoreTurn(3, 1, at(0, RUN_GRACE, JACKPOT_FULL - 1));
+    expect(turn.total).toBe(
+      turn.placement + (turn.bonus + turn.stars) * turn.multiplier + turn.jackpotBonus,
+    );
+  });
+
+  it('warns two lines out and not before', () => {
+    expect(jackpotReady(JACKPOT_FULL - 3)).toBe(false);
+    expect(jackpotReady(JACKPOT_FULL - 2)).toBe(true);
+    expect(jackpotReady(JACKPOT_FULL - 1)).toBe(true);
   });
 });

@@ -1,6 +1,9 @@
-// The end-of-run panel, the mode switch and the level goal chips. Copy stays
-// lowercase and unbothered — the category is uniformly shouty, and being calm
-// is free differentiation.
+// The end-of-run panel, the mode switch and the level goal chips.
+//
+// The chrome shouts where it is reporting a result and stays quiet where it is
+// offering a control. A settings toggle in block capitals is not exciting, it
+// is just hard to read — so the volume lives on the score, the record and the
+// buttons the machine wants pressed, and the plumbing around them behaves.
 
 import type { GameState } from '../core/game';
 import { goalMet, shortGoal, type Level } from '../core/levels';
@@ -99,7 +102,7 @@ export class EndPanel {
     if (isNew) {
       const beat = view.score - (view.previousBest ?? 0);
       this.record.textContent =
-        beat > 0 ? `new best · +${beat.toLocaleString('en-US')}` : 'new best';
+        beat > 0 ? `NEW RECORD · +${beat.toLocaleString('en-US')}` : 'NEW RECORD';
     }
 
     const streak = view.streak ?? 0;

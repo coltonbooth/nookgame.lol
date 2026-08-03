@@ -7,7 +7,12 @@ import type { MarkerKind, Preview, Slot, Source } from '../core/game';
 import { type GameState, markerAt, slotFits } from '../core/game';
 import { fogHides } from '../core/mutators';
 import { piece, type PieceId } from '../core/pieces';
-import { MAX_RUN_MULTIPLIER, runMultiplier } from '../core/scoring';
+import {
+  JACKPOT_FULL,
+  MAX_RUN_MULTIPLIER,
+  jackpotReady,
+  runMultiplier,
+} from '../core/scoring';
 import { reducedMotion } from '../platform/motion';
 import { Effects } from './effects';
 import { Roller } from './roller';
@@ -156,6 +161,11 @@ export class Renderer {
     this.roller.set(score);
   }
 
+  /** Spin the reels up to a new score. A jackpot, and nothing else. */
+  spinScore(score: number): void {
+    this.roller.spin(score);
+  }
+
   /** Jump the odometer with no roll — a fresh run, not a scoring event. */
   resetScore(score: number): void {
     this.roller.reset(score);
@@ -182,15 +192,15 @@ export class Renderer {
 
     ctx.save();
 
-    // The plate itself: brass, lit from above, sunk very slightly into the felt.
+    // The plate itself: dark metal in a gold bezel, sunk into the table.
     const metal = ctx.createLinearGradient(0, p.y, 0, p.y + p.h);
-    metal.addColorStop(0, '#3A3D46');
-    metal.addColorStop(1, '#2A2D35');
+    metal.addColorStop(0, '#3B2F4D');
+    metal.addColorStop(1, '#251D33');
     roundRect(ctx, p.x, p.y, p.w, p.h, radius);
     ctx.fillStyle = metal;
     ctx.fill();
-    ctx.lineWidth = 1.5;
-    ctx.strokeStyle = 'rgba(200, 162, 74, 0.5)';
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(240, 185, 58, 0.8)';
     ctx.stroke();
 
     const mid = p.y + p.h / 2;
@@ -211,15 +221,19 @@ export class Renderer {
     // The multiplier holds the right end, dormant at ×1 and lit the moment a
     // run starts. Score in the middle, so the plate reads left-to-right as
     // what you're holding, what you've scored, what it's worth.
+    // The multiplier gets bigger as well as brighter as it climbs — at a
+    // ceiling of ×10 it is the most exciting number on the plate and it should
+    // not be sitting there in the same 30% type it wore at ×2.
     const m = runMultiplier(state.run);
-    ctx.font = `700 ${Math.round(p.h * 0.3)}px ui-sans-serif, system-ui, sans-serif`;
+    const heat = state.run <= 0 ? 0 : m / MAX_RUN_MULTIPLIER;
+    ctx.font = `800 ${Math.round(p.h * (0.3 + heat * 0.16))}px ui-sans-serif, system-ui, sans-serif`;
     ctx.textAlign = 'right';
     ctx.fillStyle =
       state.run <= 0
-        ? 'rgba(239, 232, 218, 0.22)'
+        ? 'rgba(247, 238, 221, 0.3)'
         : m >= MAX_RUN_MULTIPLIER
-          ? BRASS
-          : '#E0A032';
+          ? '#FFFFFF'
+          : BRASS;
     ctx.fillText(`×${m}`, p.x + p.w - pad, mid);
 
     // Engraved: a dark impression offset down, then the ivory face on top.
@@ -282,18 +296,70 @@ export class Renderer {
         // The newest dot breathes, so a climbing run is visible in motion.
         const newest = i === state.run - 1 && !reducedMotion();
         const pulse = newest ? 0.85 + 0.15 * Math.sin(now / 170) : 1;
-        ctx.fillStyle = i >= dots - 1 ? BRASS : '#E0A032';
+        ctx.fillStyle = i >= dots - 1 ? '#FFFFFF' : BRASS;
         ctx.globalAlpha = pulse;
         ctx.fill();
         ctx.globalAlpha = 1;
       } else {
-        ctx.fillStyle = 'rgba(239, 232, 218, 0.1)';
+        ctx.fillStyle = 'rgba(247, 238, 221, 0.1)';
         ctx.fill();
       }
       ctx.lineWidth = 1;
-      ctx.strokeStyle = 'rgba(200, 162, 74, 0.35)';
+      ctx.strokeStyle = 'rgba(240, 185, 58, 0.35)';
       ctx.stroke();
     }
+  }
+
+  /**
+   * The jackpot meter: a gold bar along the bottom bezel, filling as you clear.
+   *
+   * The crown carries the run and the skirt carries the bank, which puts the
+   * two things a player is accumulating on opposite edges of the same object.
+   * A meter you cannot see is not a mechanic, so this is drawn every frame
+   * whether or not anything is happening to it — the point is that it is always
+   * there to be glanced at, and that it is visibly *nearly* full for a while
+   * before it goes off.
+   */
+  private drawJackpotMeter(state: GameState, now: number): void {
+    const { ctx } = this;
+    const b = this.layout.board;
+    const skirt = this.layout.skirt;
+
+    const h = Math.max(3, skirt * 0.5);
+    const y = b.y + b.h + (skirt - h) / 2;
+    const r = h / 2;
+    const filled = Math.max(0, Math.min(1, state.jackpot / JACKPOT_FULL));
+    const ready = jackpotReady(state.jackpot);
+
+    ctx.save();
+
+    // The empty channel.
+    roundRect(ctx, b.x, y, b.w, h, r);
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+    ctx.fill();
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(240, 185, 58, 0.3)';
+    ctx.stroke();
+
+    if (filled > 0) {
+      // Nearly full: throb. This is the visual half of the riser, and it is the
+      // only thing on screen that is about something which has not happened.
+      const pulse = ready && !reducedMotion() ? 0.78 + 0.22 * Math.sin(now / 110) : 1;
+      const w = Math.max(h, b.w * filled);
+
+      ctx.save();
+      roundRect(ctx, b.x, y, w, h, r);
+      ctx.clip();
+      const fill = ctx.createLinearGradient(b.x, y, b.x + w, y);
+      fill.addColorStop(0, '#B8791E');
+      fill.addColorStop(1, ready ? '#FFF0B8' : BRASS);
+      ctx.globalAlpha = pulse;
+      ctx.fillStyle = fill;
+      ctx.fillRect(b.x, y, w, h);
+      ctx.restore();
+    }
+
+    ctx.restore();
   }
 
   /**
@@ -331,13 +397,21 @@ export class Renderer {
     ctx.fillStyle = RECESS;
     ctx.fill();
     ctx.lineWidth = 2;
-    ctx.strokeStyle = 'rgba(200, 162, 74, 0.55)';
+    ctx.strokeStyle = 'rgba(240, 185, 58, 0.55)';
     ctx.stroke();
 
     this.drawRunLights(state, now);
+    this.drawJackpotMeter(state, now);
 
     // Empty wells, so the grid reads as a physical object rather than lines.
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.028)';
+    //
+    // These were drawn at 2.8% white, which was survivable against the old
+    // slate board and invisible against this one — and an empty grid you cannot
+    // see is not a cosmetic problem, it is the game becoming unplayable. Filled
+    // *and* outlined now, so every empty cell has a definite edge to aim at.
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.09)';
+    ctx.lineWidth = Math.max(1, b.cell * 0.03);
     for (let y = 0; y < N; y++) {
       for (let x = 0; x < N; x++) {
         if (isFilled(state.board, x, y)) continue;
@@ -350,6 +424,7 @@ export class Renderer {
           b.cell * 0.14,
         );
         ctx.fill();
+        ctx.stroke();
       }
     }
 
@@ -402,7 +477,7 @@ export class Renderer {
     const alpha = reducedMotion() ? 0.22 : 0.18 + 0.09 * Math.sin(now / 190);
 
     ctx.save();
-    ctx.fillStyle = `rgba(224, 160, 50, ${alpha})`;
+    ctx.fillStyle = `rgba(240, 185, 58, ${alpha})`;
     for (const y of rows) {
       ctx.fillRect(b.x, b.y + y * b.cell, b.w, b.cell);
     }
@@ -434,9 +509,9 @@ export class Renderer {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.lineWidth = Math.max(2, b.cell * 0.12);
-    ctx.strokeStyle = 'rgba(26, 29, 35, 0.85)';
+    ctx.strokeStyle = 'rgba(11, 7, 16, 0.9)';
     ctx.fillStyle = view.preview.lines.rows.length + view.preview.lines.cols.length > 0
-      ? '#E0A032'
+      ? BRASS
       : IVORY;
 
     const label = `+${view.preview.gained}`;
@@ -477,14 +552,14 @@ export class Renderer {
     // An alcove cut into the frame — same brass bezel, deeper shadow — not a
     // fourth tray slot.
     roundRect(ctx, r.x, r.y, r.w, r.h, r.w * 0.16);
-    ctx.fillStyle = state.nookUnlocked ? '#15171C' : '#101216';
+    ctx.fillStyle = state.nookUnlocked ? '#1D1629' : '#150F1F';
     ctx.fill();
     ctx.lineWidth = 2;
     ctx.strokeStyle = !state.nookUnlocked
-      ? 'rgba(200, 162, 74, 0.14)'
+      ? 'rgba(240, 185, 58, 0.14)'
       : state.nook && state.swapUsed
-        ? 'rgba(200, 162, 74, 0.24)'
-        : 'rgba(200, 162, 74, 0.5)';
+        ? 'rgba(240, 185, 58, 0.24)'
+        : 'rgba(240, 185, 58, 0.5)';
     ctx.stroke();
 
     // Sealed: no word, just the shape of what opens it. The alcove is there
@@ -560,11 +635,11 @@ export class Renderer {
 
     ctx.save();
     roundRect(ctx, rect.x + inset, rect.y + inset, rect.w - inset * 2, rect.h - inset * 2, rect.w * 0.14);
-    ctx.fillStyle = 'rgba(239, 232, 218, 0.05)';
+    ctx.fillStyle = 'rgba(247, 238, 221, 0.05)';
     ctx.fill();
     ctx.setLineDash([rect.w * 0.06, rect.w * 0.05]);
     ctx.lineWidth = 1.5;
-    ctx.strokeStyle = 'rgba(200, 162, 74, 0.4)';
+    ctx.strokeStyle = 'rgba(240, 185, 58, 0.4)';
     ctx.stroke();
     ctx.setLineDash([]);
 
@@ -645,7 +720,7 @@ export class Renderer {
     // red wherever the rectangle happened to fall.
     if (homeless) {
       ctx.globalAlpha = 0.4;
-      ctx.fillStyle = '#A32E3E';
+      ctx.fillStyle = '#C4245E';
       for (const [dx, dy] of p.cells) {
         roundRect(
           ctx,

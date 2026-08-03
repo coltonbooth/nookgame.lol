@@ -36,6 +36,16 @@ describe('computeLayout', () => {
     }
   });
 
+  it('leaves room below the board for the jackpot meter', () => {
+    // The skirt is the crown's mirror image. Unlike the crown it is reported in
+    // pixels on the layout, so the renderer cannot drift out of step with it.
+    for (const [w, h] of VIEWPORTS) {
+      const l = computeLayout(w, h);
+      expect(l.skirt).toBeGreaterThan(0);
+      expect(l.plate.y).toBeGreaterThanOrEqual(l.board.y + l.board.h + l.skirt);
+    }
+  });
+
   it('keeps the whole stack on screen', () => {
     for (const [w, h] of VIEWPORTS) {
       const l = computeLayout(w, h);

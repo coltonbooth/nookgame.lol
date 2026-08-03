@@ -25,14 +25,14 @@ export function setHapticsEnabled(value: boolean): void {
 
 export const hapticsAvailable = supported;
 
-/** A piece landing. Barely there on purpose. */
+/** A piece landing. The quietest thing here, and still a real knock. */
 export function tapPlace(): void {
-  buzz(8);
+  buzz(16);
 }
 
-/** Tucking into the Nook: softer still, and distinct from a placement. */
+/** Tucking into the Nook: a double tick, distinct from a placement. */
 export function tapStash(): void {
-  buzz([4, 30, 4]);
+  buzz([10, 26, 10]);
 }
 
 /**
@@ -41,30 +41,39 @@ export function tapStash(): void {
  */
 export function tapClear(lines: number): void {
   if (lines <= 0) return;
-  if (lines === 1) return buzz(18);
-  if (lines === 2) return buzz([14, 40, 22]);
-  return buzz([16, 36, 20, 36, 30]);
+  if (lines === 1) return buzz(32);
+  if (lines === 2) return buzz([26, 34, 40]);
+  return buzz([28, 30, 34, 30, 55]);
 }
 
 /** Swept clean — rare enough to deserve its own signature. */
 export function tapSweptClean(): void {
-  buzz([20, 50, 20, 50, 60]);
+  buzz([36, 40, 36, 40, 100]);
+}
+
+/**
+ * The jackpot. The longest, hardest pattern in the game by a distance — the
+ * payout has to be felt as categorically different from a good clear, not as a
+ * slightly better one.
+ */
+export function tapJackpot(): void {
+  buzz([60, 40, 40, 30, 40, 30, 40, 30, 60, 40, 140]);
 }
 
 /** The alcove opening. One firm knock. */
 export function tapUnlock(): void {
-  buzz([30, 60, 45]);
+  buzz([45, 50, 70]);
 }
 
 /**
- * Released somewhere illegal. A single blunt refusal — longer than a placement
- * so the hand can tell "no" from "yes" without looking.
+ * Released somewhere illegal. A single blunt refusal — shorter and duller than
+ * anything that pays, so the hand can tell "no" from "yes" without looking.
  */
 export function tapInvalid(): void {
-  buzz(12);
+  buzz(20);
 }
 
 /** Nowhere left to put it. */
 export function tapGameOver(): void {
-  buzz([40, 80, 40, 80, 70]);
+  buzz([60, 70, 60, 70, 110]);
 }

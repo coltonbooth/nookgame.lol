@@ -1,21 +1,36 @@
 // Pre-rendered block faces. Drawing the gradient, bezel and highlight for 64
 // cells every frame is wasteful; drawing one image 64 times is not.
 //
-// Art direction is "enamel pin": vitreous enamel set in a thin brass cell,
-// slightly uneven, jewel-like rather than glossy candy plastic.
+// Art direction is "neon & chrome": backlit acrylic jewels with a hot gold
+// rim-light, sunk into a black lacquer table. Lit from within rather than lit
+// from above — the old enamel-pin direction was a quiet object catching the
+// light, and this one is a machine making its own.
 
-export const FELT = '#23262E';
-export const RECESS = '#1A1D23';
-export const BRASS = '#C8A24A';
-export const IVORY = '#EFE8DA';
+export const FELT = '#191324';
+export const RECESS = '#241C33';
+export const BRASS = '#F0B93A';
+export const IVORY = '#F7EEDD';
 
-/** Index 0 is unused so a colour of 0 can mean "empty". */
+/**
+ * Index 0 is unused so a colour of 0 can mean "empty".
+ *
+ * The names below are kept — `ENAMEL`, and the export names throughout — because
+ * every call site indexes this array by number and renaming them buys nothing.
+ * The values are what changed.
+ *
+ * These are rich rather than fluorescent, and the table they sit on is a dark
+ * plum rather than a black hole. Full-saturation neon against near-black is a
+ * genuinely painful combination to look at for more than a minute — the eye has
+ * no mid-tone anywhere to rest on — and it also destroys the empty grid, which
+ * has to stay legible against the board for the game to be playable at all.
+ * Loud is a matter of contrast and motion, not of turning every channel to 255.
+ */
 export const ENAMEL = [
   '#000000',
-  '#1E7A6A', // viridian
-  '#2B5FBF', // cobalt
-  '#A32E3E', // oxblood
-  '#E0A032', // saffron
+  '#E23C86', // magenta
+  '#2FB6D9', // cyan
+  '#7FC94A', // lime
+  '#EDA531', // gold
 ] as const;
 
 export interface SpriteSheet {
@@ -69,31 +84,53 @@ function drawFace(cell: number, dpr: number, color: string): HTMLCanvasElement {
   const w = cell - inset * 2;
   const radius = cell * 0.17;
 
-  // Enamel, poured slightly unevenly: brighter at the top where light catches.
-  const enamel = ctx.createLinearGradient(0, inset, 0, inset + w);
-  enamel.addColorStop(0, shade(color, 0.2));
-  enamel.addColorStop(0.55, color);
-  enamel.addColorStop(1, shade(color, -0.22));
+  // Backlit acrylic: hot in the middle where the lamp is, falling off toward
+  // the edges. A radial gradient rather than the old vertical one, because a
+  // block lit from *inside* has its brightest point in the centre of its face,
+  // not along its top edge.
+  const body = ctx.createRadialGradient(
+    cell * 0.5,
+    cell * 0.42,
+    cell * 0.05,
+    cell * 0.5,
+    cell * 0.5,
+    cell * 0.62,
+  );
+  body.addColorStop(0, shade(color, 0.3));
+  body.addColorStop(0.45, shade(color, 0.04));
+  body.addColorStop(1, shade(color, -0.28));
 
   roundRect(ctx, inset, inset, w, w, radius);
-  ctx.fillStyle = enamel;
+  ctx.fillStyle = body;
   ctx.fill();
 
-  // Brass cell wall.
+  // The rim-light: what makes the board look like it is plugged in. Warm gold
+  // at three-quarters rather than a full-opacity outline — at full strength on
+  // every one of 64 cells it stopped reading as light and started reading as a
+  // gold grid drawn over the top of the game.
   ctx.lineWidth = Math.max(0.75, cell * 0.055);
-  ctx.strokeStyle = 'rgba(200, 162, 74, 0.55)';
+  ctx.strokeStyle = 'rgba(240, 185, 58, 0.75)';
   ctx.stroke();
 
-  // A single specular line along the top inner edge. Cheap, and it is what
-  // makes the block read as glass rather than paint.
   ctx.save();
   ctx.clip();
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)';
-  ctx.lineWidth = Math.max(0.75, cell * 0.05);
+
+  // A bright specular streak across the top, and a dimmer one at the bottom so
+  // the face reads as a curved slab of acrylic rather than a flat sticker.
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+  ctx.lineWidth = Math.max(0.75, cell * 0.06);
   ctx.beginPath();
-  ctx.moveTo(inset + radius * 0.8, inset + cell * 0.08);
-  ctx.lineTo(inset + w - radius * 0.8, inset + cell * 0.08);
+  ctx.moveTo(inset + radius * 0.7, inset + cell * 0.1);
+  ctx.lineTo(inset + w - radius * 0.7, inset + cell * 0.1);
   ctx.stroke();
+
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.14)';
+  ctx.lineWidth = Math.max(0.5, cell * 0.045);
+  ctx.beginPath();
+  ctx.moveTo(inset + radius * 0.9, inset + w - cell * 0.08);
+  ctx.lineTo(inset + w - radius * 0.9, inset + w - cell * 0.08);
+  ctx.stroke();
+
   ctx.restore();
 
   return canvas;

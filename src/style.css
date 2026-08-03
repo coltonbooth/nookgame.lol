@@ -1,15 +1,17 @@
 /* Nook — chrome only. The board, tray and Nook live on the canvas. */
 
 :root {
-  --felt: #23262e;
-  --recess: #1a1d23;
-  --brass: #c8a24a;
-  --ivory: #efe8da;
+  --felt: #191324;
+  --recess: #241c33;
+  --brass: #f0b93a;
+  --ivory: #f7eedd;
 
-  --enamel-viridian: #1e7a6a;
-  --enamel-cobalt: #2b5fbf;
-  --enamel-oxblood: #a32e3e;
-  --enamel-saffron: #e0a032;
+  /* Kept under their old names so nothing downstream has to be renamed; the
+     values are the neon set the canvas draws with. See render/sprites.ts. */
+  --enamel-viridian: #e23c86;
+  --enamel-cobalt: #2fb6d9;
+  --enamel-oxblood: #7fc94a;
+  --enamel-saffron: #eda531;
 }
 
 * {
@@ -65,7 +67,7 @@ body {
   padding: 2px;
   border-radius: 999px;
   background: rgb(0 0 0 / 0.25);
-  border: 1px solid rgb(200 162 74 / 0.18);
+  border: 1px solid rgb(240 185 58 / 0.18);
 }
 
 .mode {
@@ -76,21 +78,21 @@ body {
   font: inherit;
   font-size: 13px;
   letter-spacing: 0.02em;
-  color: rgb(239 232 218 / 0.5);
+  color: rgb(247 238 221 / 0.5);
   background: transparent;
   cursor: pointer;
 }
 
 .mode.is-on {
   color: var(--ivory);
-  background: rgb(200 162 74 / 0.16);
+  background: rgb(240 185 58 / 0.16);
 }
 
 #daily-label {
   margin: 0;
   font-size: 12px;
   letter-spacing: 0.06em;
-  color: rgb(200 162 74 / 0.75);
+  color: rgb(240 185 58 / 0.75);
 }
 
 #daily-label[hidden] {
@@ -115,20 +117,20 @@ body {
   border-radius: 999px;
   font-size: 12px;
   letter-spacing: 0.02em;
-  color: rgb(239 232 218 / 0.62);
+  color: rgb(247 238 221 / 0.62);
   background: rgb(0 0 0 / 0.22);
-  border: 1px solid rgb(200 162 74 / 0.18);
+  border: 1px solid rgb(240 185 58 / 0.18);
   font-variant-numeric: tabular-nums;
 }
 
 .goal.is-met {
-  color: #1a1d23;
+  color: #191324;
   background: var(--brass);
   border-color: var(--brass);
 }
 
 .key-action {
-  color: #1a1d23;
+  color: #191324;
   background: var(--brass);
   border-color: var(--brass);
 }
@@ -151,11 +153,21 @@ body {
   display: block;
 }
 
-/* One line of teaching at a time, sitting under the board and out of the way.
-   Never blocking, never modal, and gone for good once it has been learned. */
+/* One line of teaching at a time, sitting in the band between the score plate
+   and the tray. Never blocking, never modal, and gone for good once it has been
+   learned.
+
+   `--coach-y` is written by the render loop from the canvas layout, because
+   that band only exists in canvas coordinates — the tray is drawn, not laid
+   out, so CSS has no way to find it. Pinning this to the bottom of the viewport
+   instead (which is what it used to do) puts it straight on top of the tray
+   pieces, and a tip that covers the thing it is telling you to drag is worse
+   than no tip at all. The fallback keeps it on screen if the variable is
+   somehow missing. */
 .coach {
   position: absolute;
-  bottom: calc(env(safe-area-inset-bottom) + 8px);
+  top: var(--coach-y, 70%);
+  transform: translateY(-50%);
   margin: 0;
   padding: 7px 16px;
   max-width: 88vw;
@@ -163,9 +175,9 @@ body {
   font-size: 13px;
   letter-spacing: 0.01em;
   text-align: center;
-  color: rgb(239 232 218 / 0.78);
+  color: rgb(247 238 221 / 0.78);
   background: rgb(0 0 0 / 0.4);
-  border: 1px solid rgb(200 162 74 / 0.22);
+  border: 1px solid rgb(240 185 58 / 0.22);
   animation: coach-in 400ms ease-out;
   pointer-events: none;
 }
@@ -174,9 +186,11 @@ body {
   display: none;
 }
 
+/* The -50% is the element's own centring offset and has to survive the
+   animation, or the tip jumps half its height as it finishes coming in. */
 @keyframes coach-in {
-  0% { opacity: 0; transform: translateY(6px); }
-  100% { opacity: 1; transform: translateY(0); }
+  0% { opacity: 0; transform: translateY(calc(-50% + 6px)); }
+  100% { opacity: 1; transform: translateY(-50%); }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -195,7 +209,7 @@ body {
   align-items: center;
   justify-content: center;
   gap: 10px;
-  background: rgb(26 29 35 / 0.82);
+  background: rgb(25 19 36 / 0.86);
   backdrop-filter: blur(3px);
 }
 
@@ -208,7 +222,7 @@ body {
   font-size: 19px;
   font-weight: 400;
   letter-spacing: 0.01em;
-  color: rgb(239 232 218 / 0.72);
+  color: rgb(247 238 221 / 0.72);
 }
 
 .panel-score {
@@ -222,31 +236,36 @@ body {
   margin: 0;
   font-size: 14px;
   letter-spacing: 0.02em;
-  color: rgb(239 232 218 / 0.45);
+  color: rgb(247 238 221 / 0.45);
   font-variant-numeric: tabular-nums;
 }
 
-/* A record is the one moment the panel is allowed to be pleased with itself.
-   Brass, uppercase-spaced, and the score above it goes brass too. */
+/* A record is the loudest moment the chrome has. Gold, uppercase-spaced, and
+   it keeps pulsing rather than fading in once and settling down. */
 .panel-record {
   margin: 0;
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.16em;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.18em;
   text-transform: uppercase;
   color: var(--brass);
   font-variant-numeric: tabular-nums;
-  animation: record-in 520ms ease-out;
+  animation: record-in 520ms ease-out, record-pulse 1.1s ease-in-out 520ms infinite;
 }
 
 .panel.is-record .panel-score {
   color: var(--brass);
-  text-shadow: 0 0 24px rgb(200 162 74 / 0.35);
+  text-shadow: 0 0 30px rgb(240 185 58 / 0.55);
 }
 
 @keyframes record-in {
-  0% { opacity: 0; transform: translateY(6px); }
-  100% { opacity: 1; transform: translateY(0); }
+  0% { opacity: 0; transform: translateY(6px) scale(0.9); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes record-pulse {
+  0%, 100% { transform: scale(1); text-shadow: 0 0 12px rgb(240 185 58 / 0.4); }
+  50% { transform: scale(1.06); text-shadow: 0 0 22px rgb(240 185 58 / 0.75); }
 }
 
 /* --- settings --------------------------------------------------------- */
@@ -277,12 +296,12 @@ body {
   max-width: 34ch;
   font-size: 12px;
   line-height: 1.5;
-  color: rgb(239 232 218 / 0.4);
+  color: rgb(247 238 221 / 0.4);
 }
 
 .setting-keys b {
   font-weight: 600;
-  color: rgb(239 232 218 / 0.62);
+  color: rgb(247 238 221 / 0.62);
 }
 
 .panel-streak {
@@ -307,7 +326,7 @@ body {
   max-width: min(94vw, 460px);
   border-radius: 8px;
   background: rgb(0 0 0 / 0.3);
-  border: 1px solid rgb(200 162 74 / 0.25);
+  border: 1px solid rgb(240 185 58 / 0.25);
   color: var(--ivory);
   text-align: center;
 
@@ -334,7 +353,7 @@ body {
 
 .share-notes {
   font-size: 13px;
-  color: rgb(239 232 218 / 0.6);
+  color: rgb(247 238 221 / 0.6);
 }
 
 .share-result[hidden] {
@@ -351,7 +370,7 @@ body {
   margin: 0;
   min-height: 1.2em;
   font-size: 13px;
-  color: rgb(239 232 218 / 0.5);
+  color: rgb(247 238 221 / 0.5);
 }
 
 #share[hidden] {
@@ -365,7 +384,7 @@ body {
 
 #next-level {
   border-color: var(--brass);
-  color: #1a1d23;
+  color: #191324;
   background: var(--brass);
 }
 
@@ -378,7 +397,7 @@ body {
   font-size: 16px;
   color: var(--ivory);
   background: transparent;
-  border: 1px solid rgb(200 162 74 / 0.5);
+  border: 1px solid rgb(240 185 58 / 0.5);
   border-radius: 4px;
   cursor: pointer;
 }
@@ -386,13 +405,20 @@ body {
 #restart:hover,
 #copy:hover,
 #share:hover {
-  background: rgb(200 162 74 / 0.1);
+  background: rgb(240 185 58 / 0.14);
 }
 
 #share,
 #copy {
   border-color: var(--brass);
   color: var(--brass);
+}
+
+/* The gold buttons glow. They are the ones the machine wants you to press. */
+#next-level,
+.key-action {
+  font-weight: 700;
+  box-shadow: 0 0 18px rgb(240 185 58 / 0.4);
 }
 
 /* --- a11y ------------------------------------------------------------ */

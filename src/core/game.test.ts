@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CELLS, EMPTY_BOARD, bit, boardFromRows, isFilled, popcount } from './board';
-import { endedFairly, playOut } from './bot';
+import { endedFairly, playOut, playOutGreedy } from './bot';
 import {
   EMPTY_STATS,
   MARKER_ONE_IN,
@@ -20,7 +20,7 @@ import {
   type Slot,
 } from './game';
 import { PIECES, type PieceId } from './pieces';
-import { STAR_BONUS } from './scoring';
+import { JACKPOT_FULL, JACKPOT_PAYOUT, STAR_BONUS } from './scoring';
 
 const byName = (name: string): PieceId => {
   const p = PIECES.find((piece) => piece.name === name);
@@ -65,6 +65,7 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
     score: 0,
     run: 0,
     runGrace: 0,
+    jackpot: 0,
     keys: 0,
     keyEvent: null,
     status: 'playing',
@@ -177,8 +178,8 @@ describe('placing and scoring', () => {
     expect(next.lastEvent?.clearedRows).toEqual([0]);
     expect(next.lastEvent?.clearedCols).toEqual([7]);
     expect(next.lastEvent?.sweptClean).toBe(true);
-    // 1 cell + a 2-line bonus of 60 at x1.75 (the first clear of a run pays).
-    expect(next.score).toBe(1 + 60 * 1.75);
+    // 1 cell + a 2-line bonus of 60 at x2 (the first clear of a run pays).
+    expect(next.score).toBe(1 + 60 * 2);
     expect(next.run).toBe(1);
     expect(Array.from(next.colors).every((c) => c === 0)).toBe(true);
   });
@@ -454,8 +455,8 @@ describe('stars', () => {
       y: 0,
     });
 
-    // 1 cell + (20 line bonus + star) x1.75 for the first clear of a run.
-    expect(next.score).toBe(1 + (20 + STAR_BONUS) * 1.75);
+    // 1 cell + (20 line bonus + star) x2 for the first clear of a run.
+    expect(next.score).toBe(1 + (20 + STAR_BONUS) * 2);
     expect(next.lastEvent?.starsCleared).toBe(1);
     expect(next.lastEvent?.starBonus).toBe(STAR_BONUS);
     expect(next.lastEvent?.unlockedNook).toBe(false);
@@ -463,7 +464,7 @@ describe('stars', () => {
   });
 
   it('rides the run multiplier, which is the reason to hold one back', () => {
-    // run 4 before this placement -> 5 after -> x4.75.
+    // run 4 before this placement -> 5 after -> x6.
     const next = reducer(withStar(4), {
       type: 'place',
       source: 'tray',
@@ -471,8 +472,8 @@ describe('stars', () => {
       x: 7,
       y: 0,
     });
-    expect(next.lastEvent?.multiplier).toBe(4.75);
-    expect(next.score).toBe(1 + (20 + STAR_BONUS) * 4.75);
+    expect(next.lastEvent?.multiplier).toBe(6);
+    expect(next.score).toBe(1 + (20 + STAR_BONUS) * 6);
   });
 
   it('pays nothing for the gem that opens the Nook', () => {
@@ -486,7 +487,7 @@ describe('stars', () => {
 
     expect(next.lastEvent?.unlockedNook).toBe(true);
     expect(next.lastEvent?.starBonus).toBe(0);
-    expect(next.score).toBe(1 + 20 * 1.75); // the line bonus alone
+    expect(next.score).toBe(1 + 20 * 2); // the line bonus alone
   });
 
   it('counts a star the placed piece brings with it', () => {
@@ -582,8 +583,8 @@ describe('preview', () => {
     expect(p.legal).toBe(true);
     expect(p.lines.rows).toEqual([0]);
     expect(p.lines.cols).toEqual([]);
-    expect(p.multiplier).toBe(3.25); // run would become 3
-    expect(p.gained).toBe(1 + 20 * 3.25);
+    expect(p.multiplier).toBe(4); // run would become 3
+    expect(p.gained).toBe(1 + 20 * 4);
 
     expect(preview(s, 'tray', 0, 0, 0).legal).toBe(false);
     expect(preview(s, 'nook', 0, 7, 0).legal).toBe(false);
@@ -594,6 +595,73 @@ describe('preview', () => {
     const before = serialize(s);
     preview(s, 'tray', 0, 0, 0);
     expect(serialize(s)).toBe(before);
+  });
+
+  it('warns that a placement would fill the jackpot meter', () => {
+    const nearly = makeState({
+      board: boardFromRows(['#######.', ...Array(7).fill('........')]),
+      tray: [slot(ONE), null, null],
+      jackpot: JACKPOT_FULL - 1,
+    });
+    expect(preview(nearly, 'tray', 0, 7, 0).wouldJackpot).toBe(true);
+
+    const cold = makeState({
+      board: boardFromRows(['#######.', ...Array(7).fill('........')]),
+      tray: [slot(ONE), null, null],
+      jackpot: 0,
+    });
+    expect(preview(cold, 'tray', 0, 7, 0).wouldJackpot).toBe(false);
+  });
+});
+
+describe('the jackpot meter', () => {
+  /** A board one cell short of clearing row 0, with a 1x1 in hand. */
+  const oneAway = (overrides: Partial<GameState> = {}): GameState =>
+    makeState({
+      board: boardFromRows(['#######.', ...Array(7).fill('........')]),
+      tray: [slot(ONE), slot(DOM_H), slot(DOM_H)],
+      ...overrides,
+    });
+
+  const drop = (s: GameState): GameState =>
+    reducer(s, { type: 'place', source: 'tray', index: 0, x: 7, y: 0 });
+
+  it('banks a line per clear without paying out', () => {
+    const next = drop(oneAway({ jackpot: 3 }));
+    expect(next.jackpot).toBe(4);
+    expect(next.lastEvent?.jackpot).toBe(false);
+    expect(next.lastEvent?.jackpotBonus).toBe(0);
+    expect(next.stats.jackpots).toBe(0);
+  });
+
+  it('pays out and resets on the placement that fills it', () => {
+    const next = drop(oneAway({ jackpot: JACKPOT_FULL - 1 }));
+    expect(next.lastEvent?.jackpot).toBe(true);
+    expect(next.jackpot).toBe(0);
+    expect(next.stats.jackpots).toBe(1);
+    // 1 cell + a 20 line bonus at x2, plus the payout at the same x2.
+    expect(next.lastEvent?.jackpotBonus).toBe(JACKPOT_PAYOUT * 2);
+    expect(next.score).toBe(1 + 20 * 2 + JACKPOT_PAYOUT * 2);
+  });
+
+  it('does not fire twice off one full meter', () => {
+    const first = drop(oneAway({ jackpot: JACKPOT_FULL - 1 }));
+    expect(first.lastEvent?.jackpot).toBe(true);
+
+    const second = drop(
+      oneAway({ jackpot: first.jackpot, run: first.run, score: first.score }),
+    );
+    expect(second.lastEvent?.jackpot).toBe(false);
+  });
+
+  it('survives a replay byte-identically', () => {
+    // The meter is run state like any other, so a run that hits a jackpot has
+    // to reproduce from its seed and action list or the daily is a lie.
+    const played = playOutGreedy(createGame({ seed: 99 }));
+    expect(played.state.stats.jackpots).toBeGreaterThan(0);
+    expect(serialize(replay({ seed: 99 }, played.actions))).toBe(
+      serialize(played.state),
+    );
   });
 });
 

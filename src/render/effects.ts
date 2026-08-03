@@ -9,20 +9,23 @@
 import type { ClearedCell } from '../core/game';
 import { N } from '../core/board';
 import type { Layout } from './layout';
-import { ENAMEL } from './sprites';
+import { BRASS, ENAMEL, IVORY } from './sprites';
 
 /** Cell pop, start to finish. */
 const POP_MS = 260;
 /** Delay per step of distance from the placement — the wave. */
 const STAGGER_MS = 15;
 const PARTICLE_MS = 520;
-const PARTICLES_PER_CELL = 5;
+const PARTICLES_PER_CELL = 9;
 /** Hard cap so a five-line sweep can't tank the frame rate on an old phone. */
-const MAX_PARTICLES = 320;
+const MAX_PARTICLES = 600;
+
+/** Coins live longer than debris — they are the payout, so let them land. */
+const COIN_MS = 900;
 
 const SHAKE_MS = 220;
-/** Tiny, and only for a properly big clear. */
-const SHAKE_PX = 3.5;
+/** Every clear shakes now; the amount is what separates a single from a sweep. */
+const SHAKE_PX = 7;
 
 interface Pop {
   readonly x: number;
@@ -37,10 +40,17 @@ interface Particle {
   y: number;
   vx: number;
   vy: number;
+  /** Palette index, or `COIN` for a gold disc. */
   readonly color: number;
   readonly start: number;
   readonly size: number;
+  /** Coins tumble; debris does not. Radians per second. */
+  readonly spin: number;
+  readonly life: number;
 }
+
+/** Sentinel colour: not a palette index, a minted coin. */
+const COIN = -1;
 
 export interface ClearBurst {
   readonly cells: readonly ClearedCell[];
@@ -57,25 +67,24 @@ const PRAISE_MS = 950;
 /**
  * The praise ladder.
  *
- * This is where Nook deliberately breaks its own voice rule — the design doc
- * asks for "lowercase, gentle, never exclamatory", and a word flying across the
- * board is none of those things. The ladder climbs *out* of the house voice
- * rather than starting outside it: the low rungs are the game as written, and
- * the shouting is reserved for a clear that has genuinely earned it. Escalation
- * you can see is worth more than consistency nobody notices.
+ * The house voice is the machine's voice: every rung shouts, and the ladder is
+ * about *how much*, not about whether. This used to climb out of a deliberately
+ * quiet register — the low rungs were lowercase and the shouting was rationed
+ * for a clear that had earned it. That reservation is gone; what remains is the
+ * escalation itself, which is the part that was actually doing the work.
  */
 export const PRAISE = [
-  'nice',
-  'sweet',
-  'great',
-  'wow',
-  'AMAZING',
-  'UNBELIEVABLE',
+  'NICE',
+  'SWEET',
+  'BIG WIN',
+  'HUGE',
+  'MEGA WIN',
+  'JACKPOT',
   'LEGENDARY',
 ] as const;
 
-/** At and above this rung the word is drawn hot, in brass rather than ivory. */
-const HOT_RUNG = 4;
+/** At and above this rung the word is drawn hot, in gold rather than bone. */
+const HOT_RUNG = 2;
 
 /**
  * How impressive a clear was. Lines and streak both feed it, so a single row
@@ -247,28 +256,71 @@ export class Effects {
 
       if (reduced || this.particles.length >= MAX_PARTICLES) continue;
 
+      const px = layout.board.x + (x + 0.5) * cell;
+      const py = layout.board.y + (y + 0.5) * cell;
+
       for (let i = 0; i < PARTICLES_PER_CELL; i++) {
         const angle = (Math.PI * 2 * i) / PARTICLES_PER_CELL + Math.random();
         const speed = (0.35 + Math.random() * 0.5) * cell;
+        // Every third one is money. Mixing coins into the debris rather than
+        // spawning a separate wave keeps the count — and the frame budget —
+        // where it was, and reads better anyway: the block breaks and pays.
+        const coin = i % 3 === 0;
         this.particles.push({
-          x: layout.board.x + (x + 0.5) * cell,
-          y: layout.board.y + (y + 0.5) * cell,
+          x: px,
+          y: py,
           vx: Math.cos(angle) * speed,
-          vy: Math.sin(angle) * speed - cell * 0.35,
-          color,
-          size: cell * (0.09 + Math.random() * 0.08),
+          vy: Math.sin(angle) * speed - cell * (coin ? 0.9 : 0.35),
+          color: coin ? COIN : color,
+          size: cell * (coin ? 0.15 : 0.09 + Math.random() * 0.08),
+          spin: coin ? (Math.random() - 0.5) * 18 : 0,
+          life: coin ? COIN_MS : PARTICLE_MS,
           start: now + distance * STAGGER_MS,
         });
       }
     }
 
-    // Shake from two lines up. Three was too high a bar: doubles are the clear
-    // the game most wants players chasing, and they were landing silently.
-    // Deep into a run a single earns it too — the streak is the achievement.
+    // Every clear shakes. The old floor of two lines meant the single — by far
+    // the most common clear in the game — landed with no impact at all, which
+    // is exactly the wrong place to be economical.
     const impact = burst.lines + Math.max(0, burst.run - 2);
-    if (impact >= 2 && !reduced) {
+    if (!reduced) {
       this.shakeStart = now;
-      this.shakeAmount = Math.min(1, (impact - 1) / 3);
+      this.shakeAmount = Math.min(1, impact / 4);
+    }
+  }
+
+  /**
+   * The jackpot. A fountain of coins up the whole board, and the word.
+   *
+   * Its own method rather than a flag on `spawn()` because it is not a per-cell
+   * effect — nothing cleared, the meter simply filled, so there are no cells to
+   * radiate from. The coins come up off the bottom edge like a payout tray.
+   */
+  jackpot(layout: Layout, now: number): void {
+    this.say('JACKPOT', now, true);
+    if (this.reducedMotion()) return;
+
+    const b = layout.board;
+    this.shakeStart = now;
+    this.shakeAmount = 1;
+
+    const coins = Math.min(90, MAX_PARTICLES - this.particles.length);
+    for (let i = 0; i < coins; i++) {
+      const speed = (1.1 + Math.random() * 1.1) * b.cell;
+      const angle = -Math.PI / 2 + (Math.random() - 0.5) * 1.5;
+      this.particles.push({
+        x: b.x + Math.random() * b.w,
+        y: b.y + b.h,
+        vx: Math.cos(angle) * speed * 0.6,
+        vy: Math.sin(angle) * speed,
+        color: COIN,
+        size: b.cell * (0.13 + Math.random() * 0.1),
+        spin: (Math.random() - 0.5) * 22,
+        life: COIN_MS * 1.5,
+        // Staggered over a third of a second so it pours rather than puffs.
+        start: now + Math.random() * 320,
+      });
     }
   }
 
@@ -324,9 +376,9 @@ export class Effects {
       ctx.textBaseline = 'middle';
       ctx.lineJoin = 'round';
       ctx.lineWidth = Math.max(2, size * 0.2);
-      ctx.strokeStyle = 'rgba(26, 29, 35, 0.9)';
+      ctx.strokeStyle = 'rgba(11, 7, 16, 0.92)';
       ctx.strokeText(pop.text, cx, cy);
-      ctx.fillStyle = pop.hot ? '#E0A032' : '#EFE8DA';
+      ctx.fillStyle = pop.hot ? BRASS : IVORY;
       ctx.fillText(pop.text, cx, cy);
       ctx.restore();
     }
@@ -376,9 +428,9 @@ export class Effects {
     ctx.textBaseline = 'middle';
     ctx.lineJoin = 'round';
     ctx.lineWidth = Math.max(3, size * 0.16);
-    ctx.strokeStyle = 'rgba(26, 29, 35, 0.9)';
+    ctx.strokeStyle = 'rgba(11, 7, 16, 0.92)';
     ctx.strokeText(praise.text, cx, cy);
-    ctx.fillStyle = praise.hot ? '#E0A032' : '#EFE8DA';
+    ctx.fillStyle = praise.hot ? BRASS : IVORY;
     ctx.fillText(praise.text, cx, cy);
     ctx.restore();
   }
@@ -420,27 +472,59 @@ export class Effects {
 
     for (const p of this.particles) {
       const elapsed = now - p.start;
-      if (elapsed >= PARTICLE_MS) continue;
+      if (elapsed >= p.life) continue;
       alive.push(p);
       if (elapsed < 0) continue;
 
-      const t = elapsed / PARTICLE_MS;
+      const t = elapsed / p.life;
       // Seconds since spawn, with a little gravity.
       const s = elapsed / 1000;
       const x = p.x + p.vx * s;
       const y = p.y + p.vy * s + 900 * s * s * 0.5;
 
       ctx.save();
-      ctx.globalAlpha = Math.max(0, 1 - t);
-      ctx.fillStyle = ENAMEL[p.color] ?? ENAMEL[1]!;
-      ctx.beginPath();
-      ctx.arc(x, y, p.size * (1 - t * 0.4), 0, Math.PI * 2);
-      ctx.fill();
+      // Coins hold their opacity until near the end — a coin that fades out
+      // halfway through its arc reads as a spark, and the whole point is that
+      // it is money that lands.
+      ctx.globalAlpha = p.color === COIN
+        ? Math.max(0, Math.min(1, (1 - t) * 3))
+        : Math.max(0, 1 - t);
+
+      if (p.color === COIN) drawCoin(ctx, x, y, p.size, s * p.spin);
+      else {
+        ctx.fillStyle = ENAMEL[p.color] ?? ENAMEL[1]!;
+        ctx.beginPath();
+        ctx.arc(x, y, p.size * (1 - t * 0.4), 0, Math.PI * 2);
+        ctx.fill();
+      }
       ctx.restore();
     }
 
     this.particles = alive;
   }
+}
+
+/**
+ * A coin, tumbling. Drawn as an ellipse whose width is the cosine of its spin,
+ * which is what an actual spinning disc does — and it costs one `Math.cos`
+ * rather than a transform and a second path.
+ */
+function drawCoin(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  size: number,
+  angle: number,
+): void {
+  const face = Math.abs(Math.cos(angle));
+  ctx.beginPath();
+  ctx.ellipse(x, y, Math.max(0.4, size * face), size, 0, 0, Math.PI * 2);
+  ctx.fillStyle = BRASS;
+  ctx.fill();
+  // A darker edge, so the coin has a thickness when it turns side-on.
+  ctx.lineWidth = Math.max(0.5, size * 0.22);
+  ctx.strokeStyle = '#A2721A';
+  ctx.stroke();
 }
 
 /** Overshoots then settles. */

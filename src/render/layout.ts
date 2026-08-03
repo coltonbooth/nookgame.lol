@@ -25,6 +25,15 @@ export interface Layout {
   readonly slots: readonly Rect[];
   /** Side of one box in the tray row. */
   readonly unit: number;
+  /**
+   * Vertical room reserved below the board for the jackpot meter, in pixels.
+   *
+   * Handed over as a measurement rather than as a ratio the renderer has to
+   * re-derive. The run lights above the board are sized from a `RUN_LIGHT_ROOM`
+   * constant duplicated in `renderer.ts` that has to be kept in step with
+   * `CROWN_RATIO` here by hand; that is a trap, and the meter does not repeat it.
+   */
+  readonly skirt: number;
 }
 
 /**
@@ -62,17 +71,27 @@ const PLATE_RATIO = 0.13;
  */
 const CROWN_RATIO = 0.028;
 
+/**
+ * Headroom *below* the board for the jackpot meter, as a fraction of its width.
+ *
+ * The crown's mirror image. The meter is a bar along the bottom bezel exactly
+ * as the run lights are dots along the top one, and it needs its own reservation
+ * for the same reason: without one it gets squeezed into the gap before the
+ * plate and clipped on a short viewport.
+ */
+const SKIRT_RATIO = 0.045;
+
 export function computeLayout(width: number, height: number): Layout {
   const gap = Math.round(clamp(width * 0.03, 8, 20));
 
   // Vertically the column is: the crown the bezel lights sit in, the board
-  // (1.0), the plate (~0.13) and the tray (~0.25 of the board, since a tray box
-  // is a quarter of it), plus the gaps between them. Solve for a board that
-  // leaves room for all of it, then snap to a multiple of 8 so cells land on
-  // whole pixels.
+  // (1.0), the skirt the jackpot meter sits in, the plate (~0.13) and the tray
+  // (~0.25 of the board, since a tray box is a quarter of it), plus the gaps
+  // between them. Solve for a board that leaves room for all of it, then snap
+  // to a multiple of 8 so cells land on whole pixels.
   const byWidth = width - gap * 2;
   const byHeight =
-    (height - gap * 4) / (1 + CROWN_RATIO + PLATE_RATIO + 0.25);
+    (height - gap * 4) / (1 + CROWN_RATIO + SKIRT_RATIO + PLATE_RATIO + 0.25);
   const size = clamp(
     Math.floor(Math.min(byWidth, byHeight, MAX_BOARD) / N) * N,
     MIN_BOARD,
@@ -84,12 +103,13 @@ export function computeLayout(width: number, height: number): Layout {
   const unit = Math.floor((size - gap * 3) / 4);
   const plateH = Math.round(size * PLATE_RATIO);
   const crown = Math.ceil(size * CROWN_RATIO);
+  const skirt = Math.ceil(size * SKIRT_RATIO);
 
-  const stack = crown + size + plateH + unit;
+  const stack = crown + size + skirt + plateH + unit;
   const slack = Math.max(0, height - stack - gap * 2);
   // Never less than the crown, however little vertical room there is.
   const boardY = crown + Math.round(slack * 0.3);
-  const plateY = Math.round(boardY + size + gap * 0.55);
+  const plateY = Math.round(boardY + size + skirt + gap * 0.35);
   const trayY = Math.round(height - unit - slack * 0.3);
   const left = Math.round((width - size) / 2);
 
@@ -113,6 +133,7 @@ export function computeLayout(width: number, height: number): Layout {
     nook: { x: left, y: trayY, w: unit, h: unit },
     slots,
     unit,
+    skirt,
   };
 }
 

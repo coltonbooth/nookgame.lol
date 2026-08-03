@@ -127,6 +127,10 @@ export interface PlacementEvent {
   readonly starBonus: number;
   /** True on the one placement that opens the Nook. */
   readonly unlockedNook: boolean;
+  /** The jackpot meter filled on this placement. The biggest event there is. */
+  readonly jackpot: boolean;
+  /** What the payout was worth, multiplier included. Part of `gained`. */
+  readonly jackpotBonus: number;
 }
 
 /**
@@ -143,6 +147,8 @@ export interface RunStats {
   readonly gemsCleared: number;
   readonly starsCleared: number;
   readonly chargesFired: number;
+  /** Jackpots hit. The headline number on a shared result. */
+  readonly jackpots: number;
   /**
    * Best single clear, in lines, during each deal in order. One square per
    * entry in the shared grid, so a run reads at a glance without spoiling the
@@ -159,6 +165,7 @@ export const EMPTY_STATS: RunStats = {
   gemsCleared: 0,
   starsCleared: 0,
   chargesFired: 0,
+  jackpots: 0,
   dealClears: [],
 };
 
@@ -189,6 +196,11 @@ export interface GameState {
   readonly run: number;
   /** Non-clearing placements the run survives before it decays. */
   readonly runGrace: number;
+  /**
+   * Lines banked toward the next jackpot, 0…`JACKPOT_FULL`. Only ever goes up
+   * (bar the payout itself), so the bar on the bezel is always worth watching.
+   */
+  readonly jackpot: number;
   /** Rescues in hand. Spent from the game-over screen to carry on. */
   readonly keys: number;
   /** What the last spent Key cleared. Drives its pop, same as a line clear. */
@@ -271,6 +283,7 @@ export function createGame(options: NewGameOptions): GameState {
     score: 0,
     run: 0,
     runGrace: 0,
+    jackpot: 0,
     keys: options.keys ?? STARTING_KEYS,
     keyEvent: null,
     status: 'playing',
@@ -546,7 +559,7 @@ function resolve(
     turn: scoreTurn(
       piece(slot.piece).size,
       clearedCount,
-      { run: state.run, grace: state.runGrace },
+      { run: state.run, grace: state.runGrace, jackpot: state.jackpot },
       starsCleared,
     ),
   };
@@ -563,6 +576,12 @@ export interface Preview {
   readonly starsCleared: number;
   /** True if this is the placement that would open the Nook. */
   readonly wouldUnlock: boolean;
+  /**
+   * True if this placement would fill the jackpot meter. Knowing *before* you
+   * let go is the whole point — it turns the last two lines of a meter into a
+   * decision about which clear to take rather than a surprise after the fact.
+   */
+  readonly wouldJackpot: boolean;
 }
 
 /** The "nothing would happen" preview. Shared so callers can't drift. */
@@ -575,6 +594,7 @@ export const NO_PREVIEW: Preview = {
   gemsCleared: 0,
   starsCleared: 0,
   wouldUnlock: false,
+  wouldJackpot: false,
 };
 
 /**
@@ -607,6 +627,7 @@ export function preview(
     gemsCleared: outcome.gemsCleared,
     starsCleared: outcome.starsCleared,
     wouldUnlock: outcome.unlockedNook,
+    wouldJackpot: outcome.turn.jackpotFired,
   };
 }
 
@@ -796,6 +817,7 @@ function doPlace(
       gemsCleared: state.stats.gemsCleared + gemsCleared,
       starsCleared: state.stats.starsCleared + starsCleared,
       chargesFired: state.stats.chargesFired + chargesFired,
+      jackpots: state.stats.jackpots + (turn.jackpotFired ? 1 : 0),
       dealClears,
     },
     nookUnlocked: state.nookUnlocked || unlockedNook,
@@ -805,6 +827,7 @@ function doPlace(
     score: state.score + turn.total,
     run: turn.next.run,
     runGrace: turn.next.grace,
+    jackpot: turn.next.jackpot,
     lastEvent: {
       source,
       piece: slot.piece,
@@ -823,6 +846,8 @@ function doPlace(
       chargesFired,
       starBonus: turn.stars,
       unlockedNook,
+      jackpot: turn.jackpotFired,
+      jackpotBonus: turn.jackpotBonus,
     },
   };
 
@@ -877,6 +902,7 @@ export function serialize(state: GameState): string {
     score: state.score,
     run: state.run,
     runGrace: state.runGrace,
+    jackpot: state.jackpot,
     keys: state.keys,
     status: state.status,
     rngState: state.rngState,

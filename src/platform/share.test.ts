@@ -23,7 +23,7 @@ describe('shareText', () => {
       score: 100,
       stats: stats({ dealClears: [1, 1, 2, 0, 1, 3, 2, 2, 2, 1, 0] }),
     });
-    expect(text.split('\n')[1]).toBe('🟦🟦🟪 ⬛🟦🟨 🟪🟪🟪 🟦⬛');
+    expect(text.split('\n')[1]).toBe('🟪🟪🟦 ⬛🟪🟩 🟦🟦🟦 🟪⬛');
   });
 
   it('caps a very long run rather than wrapping forever', () => {
@@ -34,7 +34,7 @@ describe('shareText', () => {
     });
     const grid = text.split('\n')[1]!;
     expect(grid.endsWith('…')).toBe(true);
-    expect([...grid].filter((c) => c === '🟦').length).toBe(24);
+    expect([...grid].filter((c) => c === '🟪').length).toBe(24);
   });
 
   it('reports the run and the sweeps in the game\'s own voice', () => {
@@ -49,7 +49,7 @@ describe('shareText', () => {
       }),
     });
     expect(text.split('\n')[2]).toBe(
-      'longest run ×5 · swept clean twice · 30 lines',
+      'longest run ×9 · swept clean twice · 30 lines',
     );
   });
 

@@ -2,8 +2,8 @@
 // without saying anything about how to play the board.
 //
 //   Nook #204 — 12,480
-//   🟦🟦🟪 ⬛🟦🟨 🟪🟪🟪 🟦⬛
-//   longest run ×4.5 · swept clean twice
+//   🟪🟪🟦 ⬛🟪🟩 🟦🟦🟦 🟪⬛
+//   💰 3 jackpots · longest run ×9 · swept clean twice
 //
 // One square per deal, coloured by the best clear that deal produced. A short
 // brand name keeps the score the loudest thing in the line.
@@ -17,7 +17,7 @@ import { runMultiplier } from '../core/scoring';
  * on the notes line, and a sixth colour makes the grid harder to read at a
  * glance, which is the only thing the grid is for.
  */
-const SQUARES = ['⬛', '🟦', '🟪', '🟨', '🟧'] as const;
+const SQUARES = ['⬛', '🟪', '🟦', '🟩', '🟨'] as const;
 
 /** Beyond this the line wraps badly in most chat apps. */
 const MAX_SQUARES = 24;
@@ -83,8 +83,12 @@ export function shareText(result: ShareResult): string {
   const squares = grid(stats.dealClears);
   if (squares) lines.push(squares);
 
-  // Lowercase, plain, unbothered — same register as everything else.
   const notes: string[] = [];
+  // Jackpots lead the notes line. It is the rarest thing in a run and the one
+  // number somebody reading a shared result will actually compare against.
+  if (stats.jackpots > 0) {
+    notes.push(`💰 ${stats.jackpots} jackpot${stats.jackpots === 1 ? '' : 's'}`);
+  }
   if (stats.bestRun > 1) {
     notes.push(`longest run ×${runMultiplier(stats.bestRun)}`);
   }

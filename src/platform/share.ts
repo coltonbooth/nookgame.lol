@@ -23,9 +23,22 @@ const SQUARES = ['⬛', '🟦', '🟪', '🟨', '🟧'] as const;
 const MAX_SQUARES = 24;
 
 export interface ShareResult {
+  /** Only meaningful for the daily. */
   readonly day: number;
   readonly score: number;
   readonly stats: RunStats;
+  /**
+   * Which headline to write. The grid and the notes are the same in every
+   * mode — an endless best and a cleared level are just as worth sending as a
+   * daily, and gating the artefact on `mode === 'daily'` meant the two modes
+   * where most play happens produced nothing to share at all.
+   */
+  readonly mode?: 'daily' | 'endless' | 'levels' | 'rearrange';
+  /** The level number, for the levels headline. */
+  readonly level?: number;
+  /** The week's Rearrange rule, for its headline. */
+  readonly mutator?: string;
+  readonly isBest?: boolean;
 }
 
 function grid(dealClears: readonly number[]): string {
@@ -48,11 +61,24 @@ function countWord(n: number): string {
   return `${n} times`;
 }
 
+/** The first line: what this run was. */
+function headline(result: ShareResult): string {
+  const score = result.score.toLocaleString('en-US');
+  if (result.mode === 'levels') {
+    return `Nook — level ${result.level ?? 1} — ${score}`;
+  }
+  if (result.mode === 'rearrange') {
+    return `Nook — rearrange: ${result.mutator ?? ''} — ${score}`.replace('  ', ' ');
+  }
+  if (result.mode === 'endless') {
+    return result.isBest ? `Nook — new best ${score}` : `Nook — ${score}`;
+  }
+  return `Nook #${result.day} — ${score}`;
+}
+
 export function shareText(result: ShareResult): string {
   const { stats } = result;
-  const lines = [
-    `Nook #${result.day} — ${result.score.toLocaleString('en-US')}`,
-  ];
+  const lines = [headline(result)];
 
   const squares = grid(stats.dealClears);
   if (squares) lines.push(squares);

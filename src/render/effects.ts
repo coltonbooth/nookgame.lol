@@ -119,11 +119,29 @@ interface ScorePop {
   readonly hot: boolean;
 }
 
+/**
+ * The settle, start to finish. The checklist asks for ~120ms with a short
+ * overshoot; this is that, spent on scale rather than on position.
+ *
+ * Tweening the sprite from where the finger let go to where it landed would
+ * fight the reducer, which has already applied the placement — the cells are
+ * on the board the instant the action returns. Overshooting their scale reads
+ * as the same thing: the piece arrives with weight instead of teleporting.
+ */
+const LAND_MS = 130;
+
+interface Landing {
+  /** Board cell index. */
+  readonly cell: number;
+  readonly start: number;
+}
+
 export class Effects {
   private pops: Pop[] = [];
   private particles: Particle[] = [];
   private praise: Praise | null = null;
   private scores: ScorePop[] = [];
+  private landings: Landing[] = [];
   private shakeStart = -1;
   private shakeAmount = 0;
 
@@ -136,6 +154,7 @@ export class Effects {
       this.particles.length > 0 ||
       this.praise !== null ||
       this.scores.length > 0 ||
+      this.landings.length > 0 ||
       this.shakeStart >= 0
     );
   }
@@ -145,7 +164,38 @@ export class Effects {
     this.particles = [];
     this.praise = null;
     this.scores = [];
+    this.landings = [];
     this.shakeStart = -1;
+  }
+
+  /** A piece has just landed: overshoot its cells home. */
+  land(cells: readonly number[], now: number): void {
+    if (this.reducedMotion()) return;
+    for (const cell of cells) this.landings.push({ cell, start: now });
+  }
+
+  /**
+   * Scale for a cell the renderer is about to draw, or 1 if it isn't settling.
+   * The renderer asks per cell rather than the effects layer drawing over the
+   * top, so the settle applies to the real block with its real sprite.
+   */
+  landScale(cell: number, now: number): number {
+    for (const landing of this.landings) {
+      if (landing.cell !== cell) continue;
+      const t = (now - landing.start) / LAND_MS;
+      if (t < 0 || t >= 1) continue;
+      // 0.82 up through a slight overshoot and back to 1.
+      return 0.82 + easeOutBack(t) * 0.18;
+    }
+    return 1;
+  }
+
+  /** Drop finished landings. Called once a frame by the renderer. */
+  private reapLandings(now: number): void {
+    if (this.landings.length === 0) return;
+    this.landings = this.landings.filter(
+      (l) => now - l.start < LAND_MS,
+    );
   }
 
   /** One word, over the board. Replaces any word still on screen. */
@@ -161,6 +211,9 @@ export class Effects {
    * what connects the placement to the reward.
    */
   score(gained: number, x: number, y: number, now: number): void {
+    // A number flying across the board is motion, not decoration — it belongs
+    // behind the same gate as the particles and the shake.
+    if (this.reducedMotion()) return;
     this.scores.push({
       text: `+${gained.toLocaleString('en-US')}`,
       x,
@@ -235,6 +288,7 @@ export class Effects {
   }
 
   draw(ctx: CanvasRenderingContext2D, layout: Layout, now: number): void {
+    this.reapLandings(now);
     this.drawPops(ctx, layout, now);
     this.drawParticles(ctx, now);
     this.drawScores(ctx, layout, now);

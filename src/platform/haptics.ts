@@ -55,3 +55,16 @@ export function tapSweptClean(): void {
 export function tapUnlock(): void {
   buzz([30, 60, 45]);
 }
+
+/**
+ * Released somewhere illegal. A single blunt refusal — longer than a placement
+ * so the hand can tell "no" from "yes" without looking.
+ */
+export function tapInvalid(): void {
+  buzz(12);
+}
+
+/** Nowhere left to put it. */
+export function tapGameOver(): void {
+  buzz([40, 80, 40, 80, 70]);
+}

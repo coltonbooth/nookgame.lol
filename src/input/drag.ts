@@ -7,7 +7,7 @@
 // release that just missed still counts. None of them are visible in a
 // screenshot and all of them are obvious in the hand.
 
-import { N } from '../core/board';
+import { N, canPlaceAt } from '../core/board';
 import {
   NO_PREVIEW,
   preview,
@@ -37,6 +37,10 @@ export interface DragDeps {
   getLayout(): Layout;
   dispatch(action: Action): void;
   invalidate(): void;
+  /** A piece left the tray. */
+  onPickup(): void;
+  /** Released somewhere it cannot go. Silence here reads as a dropped input. */
+  onInvalidDrop(): void;
 }
 
 /** Hold this long without moving to stash, as an alternative to dragging. */
@@ -78,6 +82,7 @@ export class DragController {
     this.held = held;
     this.pointer = p;
     this.origin = p;
+    this.deps.onPickup();
     if (held.source === 'tray' && state.nookUnlocked) {
       this.armLongPress(held.index);
     }
@@ -115,7 +120,10 @@ export class DragController {
         x: drop.x,
         y: drop.y,
       });
+      return;
     }
+
+    this.deps.onInvalidDrop();
   }
 
   cancel(): void {
@@ -240,12 +248,17 @@ export class DragController {
     const b = layout.board;
     const shape = piece(held.slot.piece);
 
+    // `canPlaceAt` is a bounds check and one bitboard AND. `preview` answers
+    // the same question but computes the full placement first — line detection,
+    // scoring, marker resolution — and this runs up to ten times a frame while
+    // a piece is in hand. The full preview is worth paying for exactly once,
+    // for the anchor that wins, which `view()` already does.
     const legal = (x: number, y: number): boolean =>
       x >= 0 &&
       y >= 0 &&
       x + shape.w <= N &&
       y + shape.h <= N &&
-      preview(state, held.source, held.index, x, y).legal;
+      canPlaceAt(state.board, held.slot.piece, x, y);
 
     // Fractional anchor: where the top-left cell actually is, in cell units.
     const fx = (ghostX - b.x) / b.cell;

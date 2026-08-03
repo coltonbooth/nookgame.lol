@@ -5,7 +5,7 @@
 import type { GameState } from '../core/game';
 import { goalMet, shortGoal, type Level } from '../core/levels';
 
-export type Mode = 'endless' | 'daily' | 'levels';
+export type Mode = 'endless' | 'daily' | 'levels' | 'rearrange';
 
 export interface PanelHandlers {
   onRestart(): void;
@@ -13,6 +13,7 @@ export interface PanelHandlers {
   onCopy(): void;
   onNextLevel(): void;
   onUseKey(): void;
+  onDuel(): void;
 }
 
 /** What to show when a run stops. */
@@ -25,6 +26,14 @@ export interface PanelView {
   readonly restartLabel: string;
   /** Keys in hand. Above zero, the run doesn't have to end here. */
   readonly keys?: number;
+  /** This run beat the stored record. Worth saying so. */
+  readonly isNewBest?: boolean;
+  /** What it beat, for the delta. Only meaningful with `isNewBest`. */
+  readonly previousBest?: number;
+  /** Consecutive days played. Shown on the daily only. */
+  readonly streak?: number;
+  /** Offer to send this exact board to someone. Endless only. */
+  readonly canDuel?: boolean;
   /** The shareable result, shown verbatim so it can always be copied by hand. */
   readonly result?: string;
   /** Whether an OS share sheet is worth offering alongside copy. */
@@ -44,6 +53,9 @@ export class EndPanel {
   private readonly result: HTMLElement;
   private readonly restart: HTMLButtonElement;
   private readonly useKey: HTMLButtonElement;
+  private readonly duel: HTMLButtonElement;
+  private readonly record: HTMLElement;
+  private readonly streak: HTMLElement;
   private readonly note: HTMLElement;
 
   constructor(handlers: PanelHandlers, root: ParentNode = document) {
@@ -59,6 +71,9 @@ export class EndPanel {
     this.next = must(root, '#next-level') as HTMLButtonElement;
     this.restart = must(root, '#restart') as HTMLButtonElement;
     this.useKey = must(root, '#use-key') as HTMLButtonElement;
+    this.duel = must(root, '#duel') as HTMLButtonElement;
+    this.record = must(root, '#panel-record');
+    this.streak = must(root, '#panel-streak');
     this.result = must(root, '#share-result');
 
     this.restart.addEventListener('click', handlers.onRestart);
@@ -66,6 +81,7 @@ export class EndPanel {
     this.copy.addEventListener('click', handlers.onCopy);
     this.next.addEventListener('click', handlers.onNextLevel);
     this.useKey.addEventListener('click', handlers.onUseKey);
+    this.duel.addEventListener('click', handlers.onDuel);
   }
 
   show(view: PanelView): void {
@@ -74,6 +90,21 @@ export class EndPanel {
     this.best.textContent = view.best.toLocaleString('en-US');
     this.bestLabel.textContent = view.bestLabel;
     this.bestRow.hidden = view.best <= 0;
+
+    // A record and a mediocre loss used to render identically — the same
+    // number printed twice, in the same grey. Say it.
+    const isNew = view.isNewBest === true;
+    this.panel.classList.toggle('is-record', isNew);
+    this.record.hidden = !isNew;
+    if (isNew) {
+      const beat = view.score - (view.previousBest ?? 0);
+      this.record.textContent =
+        beat > 0 ? `new best · +${beat.toLocaleString('en-US')}` : 'new best';
+    }
+
+    const streak = view.streak ?? 0;
+    this.streak.hidden = streak < 2;
+    this.streak.textContent = `${streak} days running`;
 
     const result = view.result ?? '';
     this.renderResult(result);
@@ -85,6 +116,7 @@ export class EndPanel {
     this.useKey.hidden = keys <= 0;
     this.useKey.textContent = keys > 1 ? `use a key (${keys})` : 'use a key';
 
+    this.duel.hidden = view.canDuel !== true;
     this.next.hidden = !view.canAdvance;
     this.restart.textContent = view.restartLabel;
     this.note.textContent = '';
@@ -128,6 +160,87 @@ export class EndPanel {
   }
 }
 
+/**
+ * The settings panel.
+ *
+ * Three of these four toggles were already fully built and wired into the
+ * engine with no way for a player to reach them — `setAudioEnabled`,
+ * `setHapticsEnabled` and the generator's `fairDeal` all had zero call sites.
+ * Fair Deal in particular is described in the design doc as a trust signal, and
+ * a trust signal nobody can find is not one.
+ */
+export interface SettingsValues {
+  sound: boolean;
+  haptics: boolean;
+  reducedMotion: boolean;
+  fairDeal: boolean;
+}
+
+export class SettingsPanel {
+  private readonly panel: HTMLElement;
+  private readonly inputs: Record<keyof SettingsValues, HTMLInputElement>;
+
+  constructor(
+    private readonly onChange: (values: SettingsValues) => void,
+    root: ParentNode = document,
+  ) {
+    this.panel = must(root, '#settings');
+    this.inputs = {
+      sound: must(root, '#set-sound') as HTMLInputElement,
+      haptics: must(root, '#set-haptics') as HTMLInputElement,
+      reducedMotion: must(root, '#set-motion') as HTMLInputElement,
+      fairDeal: must(root, '#set-fair') as HTMLInputElement,
+    };
+
+    for (const input of Object.values(this.inputs)) {
+      input.addEventListener('change', () => this.onChange(this.read()));
+    }
+
+    (must(root, '#close-settings') as HTMLButtonElement).addEventListener(
+      'click',
+      () => this.hide(),
+    );
+    (must(root, '#open-settings') as HTMLButtonElement).addEventListener(
+      'click',
+      () => this.show(),
+    );
+  }
+
+  private read(): SettingsValues {
+    return {
+      sound: this.inputs.sound.checked,
+      haptics: this.inputs.haptics.checked,
+      reducedMotion: this.inputs.reducedMotion.checked,
+      fairDeal: this.inputs.fairDeal.checked,
+    };
+  }
+
+  set(values: SettingsValues): void {
+    this.inputs.sound.checked = values.sound;
+    this.inputs.haptics.checked = values.haptics;
+    this.inputs.reducedMotion.checked = values.reducedMotion;
+    this.inputs.fairDeal.checked = values.fairDeal;
+  }
+
+  /** Vibration is Android-only; hide the toggle where it does nothing. */
+  setHapticsSupported(supported: boolean): void {
+    const row = this.inputs.haptics.closest('label');
+    if (row instanceof HTMLElement) row.hidden = !supported;
+  }
+
+  show(): void {
+    this.panel.hidden = false;
+  }
+
+  hide(): void {
+    this.panel.hidden = true;
+  }
+
+  get open(): boolean {
+    return !this.panel.hidden;
+  }
+}
+
 /** Three tabs. Endless is the default; today is the reason to come back. */
 export class ModeTabs {
   private readonly buttons: Record<Mode, HTMLButtonElement>;
@@ -138,6 +251,7 @@ export class ModeTabs {
       endless: must(root, '#mode-endless') as HTMLButtonElement,
       daily: must(root, '#mode-daily') as HTMLButtonElement,
       levels: must(root, '#mode-levels') as HTMLButtonElement,
+      rearrange: must(root, '#mode-rearrange') as HTMLButtonElement,
     };
     this.label = must(root, '#daily-label');
 

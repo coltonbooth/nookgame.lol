@@ -9,10 +9,19 @@
 // rising faster than you can keep up: "score 400" is a warm-up, "score 8,000"
 // fails because the run ends first.
 
+import { popcount } from './board';
 import type { GameState } from './game';
 import { hashString, nextInt, type RngState } from './rng';
 
-export type GoalKind = 'score' | 'lines' | 'gems' | 'stars' | 'combo' | 'sweep';
+export type GoalKind =
+  | 'score'
+  | 'lines'
+  | 'gems'
+  | 'stars'
+  | 'combo'
+  | 'sweep'
+  | 'run'
+  | 'tidy';
 
 export interface Goal {
   readonly kind: GoalKind;
@@ -59,16 +68,26 @@ export function targetFor(kind: GoalKind, level: number): number {
       return tidy(150 + Math.pow(n, 1.4) * 45);
     case 'lines':
       return 3 + Math.floor(n * 0.85);
-    // Capped, because markers have to actually turn up to be collected.
+    // Markers have to actually turn up to be collected, so this rises slowly —
+    // but it does keep rising. It used to stop dead at 12 around level 28,
+    // after which every collect goal on the ladder was identical forever.
     case 'gems':
     case 'stars':
-      return clamp(1 + Math.floor(n / 2.5), 1, 12);
-    // A double is very achievable; a triple is genuinely hard, so it arrives
-    // late and never asks for more.
+      return clamp(1 + Math.floor(n / 2.5), 1, 30);
+    // A double is very achievable; a triple is genuinely hard. Four is a real
+    // event, and asking for it is what a level in the fifties is *for*.
     case 'combo':
-      return n < 18 ? 2 : 3;
+      if (n < 18) return 2;
+      return n < 40 ? 3 : 4;
     case 'sweep':
-      return 1;
+      return n < 30 ? 1 : 2;
+    // Hold a streak going. Reaching the x5 cap needs six clears in a row.
+    case 'run':
+      return clamp(2 + Math.floor(n / 8), 2, 6);
+    // Get the board down to this many cells or fewer. Pure board management,
+    // and it tightens purely by asking for less room used.
+    case 'tidy':
+      return clamp(40 - Math.floor(n / 3), 10, 40);
   }
 }
 
@@ -77,16 +96,21 @@ export function layoutCellsFor(level: number): number {
   return clamp(Math.floor((level - LAYOUT_FROM_LEVEL + 1) * 1.4), 4, MAX_LAYOUT_CELLS);
 }
 
-/** How many goals a level asks for. Ramps so the opening stays readable. */
+/**
+ * How many goals a level asks for. Ramps so the opening stays readable, and
+ * keeps ramping — stopping at three was most of why levels past the twenties
+ * all felt the same.
+ */
 function goalCountFor(level: number): number {
   if (level < 4) return 1;
   if (level < 12) return 2;
-  return 3;
+  if (level < 32) return 3;
+  return 4;
 }
 
 const PRIMARY: readonly GoalKind[] = ['score', 'lines'];
 const COLLECT: readonly GoalKind[] = ['gems', 'stars'];
-const HARD: readonly GoalKind[] = ['combo', 'sweep'];
+const HARD: readonly GoalKind[] = ['combo', 'sweep', 'run', 'tidy'];
 
 /** Deterministic pick, so the ladder is identical for everyone. */
 function pick<T>(items: readonly T[], state: RngState): [T, RngState] {
@@ -112,9 +136,7 @@ export function goalsFor(level: number): Goal[] {
   }
 
   if (count >= 3) {
-    // The third slot mixes in the hard kinds once the ladder has warmed up,
-    // but never two hard goals at once — that stops being a level and starts
-    // being a lottery.
+    // The third slot mixes in the hard kinds once the ladder has warmed up.
     const pool: GoalKind[] = n >= 14 ? [...COLLECT, ...HARD] : [...COLLECT];
     const remaining = pool.filter((kind) => !kinds.includes(kind));
     const [third, afterThird] = pick(
@@ -123,6 +145,20 @@ export function goalsFor(level: number): Goal[] {
     );
     rng = afterThird;
     kinds.push(third);
+  }
+
+  if (count >= 4) {
+    // Deep in the ladder a second hard goal is the point. Still never the
+    // same kind twice, and the primary is always there to carry the level.
+    const remaining = [...PRIMARY, ...COLLECT, ...HARD].filter(
+      (kind) => !kinds.includes(kind),
+    );
+    const [fourth, afterFourth] = pick(
+      remaining.length > 0 ? remaining : HARD,
+      rng,
+    );
+    rng = afterFourth;
+    kinds.push(fourth);
   }
 
   return kinds.map((kind) => ({ kind, target: targetFor(kind, n) }));
@@ -162,11 +198,23 @@ export function progressOf(goal: Goal, state: GameState): number {
       return bestClear(state);
     case 'sweep':
       return state.stats.sweptClean;
+    case 'run':
+      return state.stats.bestRun;
+    case 'tidy':
+      return popcount(state.board);
   }
 }
 
+/**
+ * `tidy` is the one goal you meet by going *down*: it asks you to get the board
+ * under a size, not over one. Everything else is a threshold to reach.
+ */
+const COUNTS_DOWN: ReadonlySet<GoalKind> = new Set<GoalKind>(['tidy']);
+
 export const goalMet = (goal: Goal, state: GameState): boolean =>
-  progressOf(goal, state) >= goal.target;
+  COUNTS_DOWN.has(goal.kind)
+    ? progressOf(goal, state) <= goal.target
+    : progressOf(goal, state) >= goal.target;
 
 export const levelComplete = (level: Level, state: GameState): boolean =>
   level.goals.every((goal) => goalMet(goal, state));
@@ -187,13 +235,18 @@ export function describeGoal(goal: Goal): string {
     case 'combo':
       return `clear ${goal.target} lines at once`;
     case 'sweep':
-      return 'sweep the board clean';
+      return goal.target === 1
+        ? 'sweep the board clean'
+        : `sweep the board clean ${goal.target} times`;
+    case 'run':
+      return `reach a run of ${goal.target}`;
+    case 'tidy':
+      return `get the board down to ${goal.target} blocks`;
   }
 }
 
 /** Compact form for the HUD chip: "gems 2/4". */
 export function shortGoal(goal: Goal, state: GameState): string {
-  const done = Math.min(progressOf(goal, state), goal.target);
   const label: Record<GoalKind, string> = {
     score: 'score',
     lines: 'lines',
@@ -201,6 +254,14 @@ export function shortGoal(goal: Goal, state: GameState): string {
     stars: 'stars',
     combo: 'combo',
     sweep: 'sweep',
+    run: 'run',
+    tidy: 'tidy',
   };
-  return `${label[goal.kind]} ${done.toLocaleString('en-US')}/${goal.target.toLocaleString('en-US')}`;
+
+  const raw = progressOf(goal, state);
+  // A counting-down goal reads the other way round: "tidy 34→20", not "34/20",
+  // which would look like you had overshot.
+  const done = COUNTS_DOWN.has(goal.kind) ? raw : Math.min(raw, goal.target);
+  const join = COUNTS_DOWN.has(goal.kind) ? '→' : '/';
+  return `${label[goal.kind]} ${done.toLocaleString('en-US')}${join}${goal.target.toLocaleString('en-US')}`;
 }

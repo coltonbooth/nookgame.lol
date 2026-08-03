@@ -25,6 +25,7 @@ export interface SpriteSheet {
   /** Overlaid on a block face to mark a cell. Cool stone vs. warm star. */
   readonly gem: HTMLCanvasElement;
   readonly star: HTMLCanvasElement;
+  readonly charge: HTMLCanvasElement;
 }
 
 function roundRect(
@@ -214,9 +215,80 @@ function drawStar(cell: number, dpr: number): HTMLCanvasElement {
 }
 
 /**
- * Sheets are keyed by rounded cell size — the board and the tray use one each,
- * and both are rebuilt whenever the canvas resizes or the DPR changes.
+ * A flame, for a charged cell.
+ *
+ * Read as a silhouette: the gem is a faceted diamond, the star is spiked, and
+ * this is a teardrop with a point at the top. At tray size the outline is doing
+ * all the work, so all three have to differ in shape before they differ in
+ * colour — and a flame says "this is going to go off" in a way a ring never did.
  */
+export function drawFlamePath(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  radius: number,
+): void {
+  const r = radius;
+  ctx.beginPath();
+  // Tip, leaning very slightly so it reads as alight rather than as a droplet.
+  ctx.moveTo(cx + r * 0.08, cy - r);
+  ctx.bezierCurveTo(
+    cx + r * 0.82, cy - r * 0.2,
+    cx + r * 0.72, cy + r * 0.62,
+    cx, cy + r,
+  );
+  ctx.bezierCurveTo(
+    cx - r * 0.72, cy + r * 0.62,
+    cx - r * 0.8, cy - r * 0.18,
+    cx + r * 0.08, cy - r,
+  );
+  ctx.closePath();
+}
+
+function drawCharge(cell: number, dpr: number): HTMLCanvasElement {
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(cell * dpr));
+  canvas.height = Math.max(1, Math.round(cell * dpr));
+
+  const ctx = canvas.getContext('2d')!;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  const c = cell / 2;
+  const r = cell * 0.3;
+
+  // The same dark seat the other two markers use, so it holds over any colour.
+  drawFlamePath(ctx, c, c, r * 1.26);
+  ctx.fillStyle = 'rgba(16, 18, 22, 0.55)';
+  ctx.fill();
+
+  // Hot at the base, bright at the tip — the way a flame actually reads.
+  const body = ctx.createLinearGradient(c, c - r, c, c + r);
+  body.addColorStop(0, '#FFD98A');
+  body.addColorStop(0.45, '#E8892E');
+  body.addColorStop(1, '#B33A28');
+
+  drawFlamePath(ctx, c, c, r);
+  ctx.fillStyle = body;
+  ctx.fill();
+  ctx.lineWidth = Math.max(0.6, cell * 0.03);
+  ctx.strokeStyle = 'rgba(90, 30, 14, 0.6)';
+  ctx.stroke();
+
+  // An inner flame, offset up, so there is something burning inside it.
+  drawFlamePath(ctx, c, c + r * 0.22, r * 0.46);
+  ctx.fillStyle = '#FFF3CE';
+  ctx.fill();
+
+  return canvas;
+}
+
+/**
+ * Pre-rendered sheets, keyed by cell size. Board cell plus one per distinct
+ * tray footprint are live at once; anything beyond that is history left behind
+ * by a window resize or a device rotation, each holding several canvases alive.
+ */
+const MAX_SHEETS = 16;
+
 export class SpriteCache {
   private dpr = 0;
   private sheets = new Map<number, SpriteSheet>();
@@ -229,14 +301,26 @@ export class SpriteCache {
 
     const key = Math.round(cell * 4) / 4;
     const existing = this.sheets.get(key);
-    if (existing) return existing;
+    if (existing) {
+      // Re-insert so insertion order tracks recency; the eviction below then
+      // drops the coldest size rather than an arbitrary one.
+      this.sheets.delete(key);
+      this.sheets.set(key, existing);
+      return existing;
+    }
 
     const sheet: SpriteSheet = {
       cell: key,
       faces: ENAMEL.map((color) => drawFace(key, dpr, color)),
       gem: drawGem(key, dpr),
       star: drawStar(key, dpr),
+      charge: drawCharge(key, dpr),
     };
+
+    if (this.sheets.size >= MAX_SHEETS) {
+      const coldest = this.sheets.keys().next().value;
+      if (coldest !== undefined) this.sheets.delete(coldest);
+    }
     this.sheets.set(key, sheet);
     return sheet;
   }

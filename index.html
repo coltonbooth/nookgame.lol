@@ -12,6 +12,23 @@
       content="Nook — Block Puzzle. A calm 8×8 block puzzle. Every piece finds its nook."
     />
     <title>Nook — Block Puzzle</title>
+
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Nook" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Nook — Block Puzzle" />
+    <meta
+      property="og:description"
+      content="A calm 8×8 block puzzle. Every piece finds its nook."
+    />
+    <meta property="og:image" content="/icon-512.png" />
+    <meta name="twitter:card" content="summary" />
+
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
@@ -21,25 +38,35 @@
           <button id="mode-endless" type="button" class="mode is-on">endless</button>
           <button id="mode-daily" type="button" class="mode">today</button>
           <button id="mode-levels" type="button" class="mode">levels</button>
+          <button id="mode-rearrange" type="button" class="mode">rearrange</button>
+          <button
+            id="open-settings"
+            type="button"
+            class="mode mode-icon"
+            aria-label="settings"
+            title="settings"
+          >
+            ···
+          </button>
         </nav>
-        <div id="score-plate">
-          <span id="score" class="score-digits">0</span>
-          <span id="multiplier" class="multiplier" aria-hidden="true">×1</span>
-        </div>
+        <!-- The score, the run and the keys are drawn on the canvas now, as
+             an engraved plate and lights along the bezel. What stays here is
+             the part canvas cannot do: a live region a screen reader can
+             follow, updated on every placement. -->
         <p id="daily-label" hidden></p>
         <div id="goals" hidden aria-live="polite"></div>
-        <div id="run-indicator" aria-hidden="true"></div>
-        <p id="keys" class="keys" hidden></p>
       </header>
 
       <div id="stage-wrap"><canvas id="stage"></canvas></div>
 
       <div id="panel" class="panel" hidden>
         <p class="panel-title">nowhere left to put it</p>
+        <p id="panel-record" class="panel-record" hidden>new best</p>
         <p class="panel-score"><span id="panel-score">0</span></p>
         <p class="panel-best">
           <span id="panel-best-label">best</span> <span id="panel-best">0</span>
         </p>
+        <p id="panel-streak" class="panel-streak" hidden></p>
         <div id="share-result" class="share-result" hidden></div>
         <div class="panel-actions">
           <button id="use-key" type="button" class="key-action" hidden>use a key</button>
@@ -47,9 +74,47 @@
           <button id="next-level" type="button" hidden>next level</button>
           <button id="copy" type="button" hidden>copy</button>
           <button id="share" type="button" hidden>share</button>
+          <button id="duel" type="button" hidden>challenge a friend</button>
         </div>
         <p id="share-note" class="panel-note" aria-live="polite"></p>
       </div>
+
+      <div id="settings" class="panel" hidden>
+        <p class="panel-title">settings</p>
+
+        <label class="setting">
+          <input id="set-sound" type="checkbox" checked />
+          <span>sound</span>
+        </label>
+        <label class="setting">
+          <input id="set-haptics" type="checkbox" checked />
+          <span>vibration</span>
+        </label>
+        <label class="setting">
+          <input id="set-motion" type="checkbox" />
+          <span>reduce motion</span>
+        </label>
+        <label class="setting">
+          <input id="set-fair" type="checkbox" />
+          <span>fair deal</span>
+        </label>
+        <p class="setting-note">
+          fair deal turns off every bit of help the generator gives you — no
+          board-aware weighting, no mercy. pieces come from the raw bag. takes
+          effect on the next run.
+        </p>
+
+        <p class="setting-note setting-keys">
+          keyboard · <b>1 2 3</b> pick · <b>arrows</b> move · <b>enter</b> place
+          · <b>q</b> stash · <b>e</b> take from the nook · <b>esc</b> put back
+        </p>
+
+        <div class="panel-actions">
+          <button id="close-settings" type="button">done</button>
+        </div>
+      </div>
+
+      <p id="coach" class="coach" hidden></p>
 
       <div id="announcer" class="visually-hidden" aria-live="polite" role="status"></div>
     </div>

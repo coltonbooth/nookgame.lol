@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CELLS, EMPTY_BOARD, bit, boardFromRows, popcount } from './board';
+import { CELLS, EMPTY_BOARD, bit, boardFromRows, isFilled, popcount } from './board';
 import { endedFairly, playOut } from './bot';
 import {
   EMPTY_STATS,
@@ -55,6 +55,7 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
     colors: new Uint8Array(CELLS),
     gems: EMPTY_BOARD,
     stars: EMPTY_BOARD,
+    charges: EMPTY_BOARD,
     markerPolicy: 'progression',
     markerOneIn: MARKER_ONE_IN,
     tray: [null, null, null],
@@ -71,6 +72,7 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
     dealCount: 1,
     recentShapes: [],
     fairDeal: false,
+    mutator: null,
     lastEvent: null,
     ...overrides,
   };
@@ -360,9 +362,10 @@ describe('gems and earning the Nook', () => {
     expect(g.nook).toEqual(slot(DOM_H));
   });
 
-  it('keeps dealing markers once the Nook is open — they become stars', () => {
+  it('keeps dealing markers once the Nook is open — never gems again', () => {
     let dealt = 0;
     let marked = 0;
+    const kinds = new Set<string>();
 
     for (let seed = 0; seed < 60; seed++) {
       // Empty the tray of an already-unlocked game to force a fresh deal.
@@ -376,12 +379,16 @@ describe('gems and earning the Nook', () => {
         dealt++;
         if (s.marker !== NO_MARKER) {
           marked++;
-          // Under 'progression', an open Nook means stars from here on.
-          expect(s.markerKind).toBe('star');
+          kinds.add(s.markerKind);
+          // Under 'progression', an open Nook means the gem's work is done:
+          // from here it is stars for score and the occasional charge.
+          expect(s.markerKind).not.toBe('gem');
         }
       }
     }
 
+    // Both post-unlock kinds should actually turn up over sixty runs.
+    expect(kinds).toEqual(new Set(['star', 'charge']));
     expect(dealt).toBeGreaterThan(100);
     expect(marked).toBeGreaterThan(0);
   });
@@ -654,6 +661,159 @@ describe('replay determinism', () => {
     const a = playOut(createGame({ seed: 1 }), 999);
     const b = playOut(createGame({ seed: 2 }), 999);
     expect(serialize(a.state)).not.toBe(serialize(b.state));
+  });
+});
+
+describe('markers by policy', () => {
+  /** Every marker kind on the tray of a freshly dealt game. */
+  const dealtKinds = (options: Parameters<typeof createGame>[0]): string[] =>
+    createGame(options).tray.flatMap((s) =>
+      s && s.marker !== NO_MARKER ? [s.markerKind] : [],
+    );
+
+  it("never deals a flame under 'mixed' — levels count gems and stars", () => {
+    // Level goals are denominated in gems and stars, so a third kind in the
+    // pool silently cuts the supply of both and makes every collect-goal
+    // harder without any target moving to meet it.
+    const kinds = new Set<string>();
+    for (let seed = 0; seed < 40; seed++) {
+      for (const k of dealtKinds({ seed, markerPolicy: 'mixed', markerOneIn: 1 })) {
+        kinds.add(k);
+      }
+    }
+    expect(kinds).toEqual(new Set(['gem', 'star']));
+  });
+
+  it("deals flames alongside stars under 'progression' once the Nook is open", () => {
+    const kinds = new Set<string>();
+    for (let seed = 0; seed < 40; seed++) {
+      for (const k of dealtKinds({ seed, markerOneIn: 1, nookUnlocked: true })) {
+        kinds.add(k);
+      }
+    }
+    expect(kinds).toEqual(new Set(['star', 'charge']));
+  });
+
+  it('deals only gems while the Nook is still sealed', () => {
+    const kinds = new Set<string>();
+    for (let seed = 0; seed < 40; seed++) {
+      for (const k of dealtKinds({ seed, markerOneIn: 1 })) kinds.add(k);
+    }
+    expect(kinds).toEqual(new Set(['gem']));
+  });
+});
+
+describe('charged cells', () => {
+  // Row 7 is one cell short. A charge sitting in the middle of it goes off
+  // when the row completes, taking the 3x3 around it with it.
+  const primed = (chargeAt: [number, number]) =>
+    makeState({
+      board: boardFromRows([
+        '........',
+        '........',
+        '........',
+        '........',
+        '........',
+        '..###...',
+        '..###...',
+        '.#######',
+      ]),
+      charges: bit(chargeAt[0], chargeAt[1]),
+      tray: [slot(ONE), slot(DOM_H), slot(DOM_H)],
+    });
+
+  const fire = (state: GameState) =>
+    reducer(state, { type: 'place', source: 'tray', index: 0, x: 0, y: 7 });
+
+  it('takes the surrounding 3x3 with it when its line clears', () => {
+    const before = primed([3, 7]);
+    const after = fire(before);
+
+    expect(after.lastEvent?.clearedRows).toEqual([7]);
+    expect(after.lastEvent?.chargesFired).toBe(1);
+    // Row 6 sat above the cleared row and was part of no full line. The whole
+    // 3x3 around the charge goes: (2,6), (3,6) and (4,6).
+    expect(isFilled(after.board, 2, 6)).toBe(false);
+    expect(isFilled(after.board, 3, 6)).toBe(false);
+    expect(isFilled(after.board, 4, 6)).toBe(false);
+    // Row 5 is two rows up — outside a radius-1 blast — and survives intact.
+    expect(isFilled(after.board, 2, 5)).toBe(true);
+    expect(isFilled(after.board, 3, 5)).toBe(true);
+    expect(isFilled(after.board, 4, 5)).toBe(true);
+  });
+
+  it('does nothing at all until its line actually clears', () => {
+    const s = makeState({
+      board: boardFromRows([
+        '........',
+        '........',
+        '........',
+        '........',
+        '........',
+        '..###...',
+        '..###...',
+        '.#####..',
+      ]),
+      charges: bit(3, 7),
+      tray: [slot(ONE), slot(DOM_H), slot(DOM_H)],
+    });
+    const after = reducer(s, { type: 'place', source: 'tray', index: 0, x: 0, y: 7 });
+    expect(after.lastEvent?.clearedRows).toEqual([]);
+    expect(after.lastEvent?.chargesFired).toBe(0);
+    // Everything the blast would have taken is still standing.
+    expect(isFilled(after.board, 3, 6)).toBe(true);
+    expect(isFilled(after.board, 3, 5)).toBe(true);
+    expect(after.charges).toBe(bit(3, 7));
+  });
+
+  it('pays no points — the hole it opens is the whole reward', () => {
+    const plain = makeState({
+      board: boardFromRows([...Array(7).fill('........'), '.#######']),
+      tray: [slot(ONE), slot(DOM_H), slot(DOM_H)],
+    });
+    const charged = makeState({
+      board: boardFromRows([...Array(7).fill('........'), '.#######']),
+      charges: bit(3, 7),
+      tray: [slot(ONE), slot(DOM_H), slot(DOM_H)],
+    });
+    expect(fire(charged).score).toBe(fire(plain).score);
+  });
+
+  it('does not chain — one blast never sets off another', () => {
+    const s = makeState({
+      board: boardFromRows([
+        '........',
+        '........',
+        '........',
+        '........',
+        '........',
+        '........',
+        '.....#..',
+        '.#######',
+      ]),
+      // (2,7) clears with the row; (5,6) is only reachable via the first blast.
+      charges: bit(2, 7) | bit(5, 6),
+      tray: [slot(ONE), slot(DOM_H), slot(DOM_H)],
+    });
+    const after = fire(s);
+    // Only the charge caught by the line itself counts as fired.
+    expect(after.lastEvent?.chargesFired).toBe(1);
+    // The second charge was outside the first blast, so it is still on the board.
+    expect(after.charges).toBe(bit(5, 6));
+  });
+
+  it('clears the colours of everything the blast took', () => {
+    const after = fire(primed([3, 7]));
+    for (let cell = 0; cell < CELLS; cell++) {
+      if ((after.board & (1n << BigInt(cell))) === 0n) {
+        expect(after.colors[cell]).toBe(0);
+      }
+    }
+  });
+
+  it('survives a round trip through serialize', () => {
+    const s = primed([3, 7]);
+    expect(JSON.parse(serialize(s)).charges).toBe(s.charges.toString(36));
   });
 });
 

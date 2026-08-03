@@ -45,11 +45,27 @@ function create(): AudioContext | null {
 /**
  * Call from the first real user gesture. Safe to call repeatedly — iOS can
  * re-suspend the context when the tab goes to the background.
+ *
+ * Also re-arms on `visibilitychange`, which the old version anticipated in a
+ * comment but never wired up: coming back to a backgrounded tab left the
+ * context suspended and the game silent with nothing to explain it.
  */
 export function unlockAudio(): void {
   const context = create();
-  if (context && context.state === 'suspended') void context.resume();
+  if (!context) return;
+  if (context.state === 'suspended') void context.resume();
+
+  if (!watchingVisibility) {
+    watchingVisibility = true;
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && ctx?.state === 'suspended') {
+        void ctx.resume();
+      }
+    });
+  }
 }
+
+let watchingVisibility = false;
 
 export function setAudioEnabled(value: boolean): void {
   enabled = value;
@@ -72,7 +88,14 @@ interface Note {
 function play(note: Note): void {
   if (!enabled) return;
   const context = create();
-  if (!context || !master || context.state !== 'running') return;
+  if (!context || !master) return;
+
+  // `resume()` is async, so the very first sound of a session — the one fired
+  // in the same tick as the unlocking gesture — used to be dropped on the floor
+  // by a `state !== 'running'` guard. Kick a resume and schedule anyway;
+  // a still-suspended context queues the note rather than losing it.
+  if (context.state === 'suspended') void context.resume();
+  if (context.state === 'closed') return;
 
   const start = context.currentTime + (note.at ?? 0);
   const duration = note.duration ?? 0.18;
@@ -108,9 +131,50 @@ function runNote(n: number): number {
   return step(PENTATONIC[index % PENTATONIC.length]! + octave * 12);
 }
 
-/** A piece landing. Low, short, felt more than heard. */
+/**
+ * A piece landing. Low, short, felt more than heard.
+ *
+ * The body is the same falling triangle it always was; the very short square
+ * on top is the transient — the click of enamel meeting brass. Without it the
+ * sound has no attack and reads as a synth blip rather than a physical event.
+ */
 export function soundPlace(): void {
   play({ hz: 190, to: 130, duration: 0.075, type: 'triangle', gain: 0.5 });
+  play({ hz: 2400, to: 1500, duration: 0.012, type: 'square', gain: 0.06 });
+}
+
+/** Lifting a piece out of the tray. Barely there — it must not nag. */
+export function soundPickup(): void {
+  play({ hz: 300, to: 380, duration: 0.05, type: 'sine', gain: 0.18 });
+}
+
+/**
+ * Released somewhere it cannot go. A soft, flat thud — deliberately not a
+ * buzzer. An illegal drop used to be completely silent, which reads as the
+ * game having missed the input rather than having refused it.
+ */
+export function soundInvalid(): void {
+  play({ hz: 150, to: 110, duration: 0.09, type: 'triangle', gain: 0.3 });
+}
+
+/** Spending a Key. Metallic, turning, and clearly a different act to a clear. */
+export function soundKey(): void {
+  play({ hz: step(7), duration: 0.14, type: 'triangle', gain: 0.4 });
+  play({ hz: step(12), at: 0.07, duration: 0.3, type: 'sine', gain: 0.5 });
+  play({ hz: step(19), at: 0.16, duration: 0.5, type: 'sine', gain: 0.4 });
+}
+
+/** A level's objectives all met. Brighter and shorter than swept clean. */
+export function soundLevelClear(): void {
+  [0, 4, 7, 12].forEach((semitones, i) => {
+    play({
+      hz: step(semitones),
+      at: i * 0.055,
+      duration: 0.35,
+      type: 'sine',
+      gain: 0.5,
+    });
+  });
 }
 
 /** Tucking into the Nook — its own soft, distinct sound. A small tuck. */
@@ -151,6 +215,23 @@ export function soundUnlock(): void {
   play({ hz: step(0), duration: 0.3, type: 'sine', gain: 0.6 });
   play({ hz: step(7), at: 0.1, duration: 0.35, type: 'sine', gain: 0.6 });
   play({ hz: step(12), at: 0.2, duration: 0.5, type: 'sine', gain: 0.5 });
+}
+
+/**
+ * A new personal best. The only fanfare in the game that climbs and stays up —
+ * everything else resolves downward or holds. Rare by definition, so it can
+ * afford to be the brightest thing here.
+ */
+export function soundNewBest(): void {
+  [0, 4, 7, 12, 16, 19].forEach((semitones, i) => {
+    play({
+      hz: step(semitones),
+      at: i * 0.06,
+      duration: 0.45,
+      type: 'sine',
+      gain: 0.5,
+    });
+  });
 }
 
 /** Nowhere left to put it. Falling, unhurried, not a buzzer. */

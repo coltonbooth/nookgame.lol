@@ -10,7 +10,6 @@ import {
   bit,
   canPlace,
   cellsAt,
-  clearLines,
   fitsAnywhere,
   fullLines,
   isFilled,
@@ -26,6 +25,7 @@ import {
   type FullLines,
 } from './board';
 import { dealThree, generateLayout } from './generator';
+import { type Mutator } from './mutators';
 import { COLOR_COUNT, piece, type PieceId } from './pieces';
 import { nextInt, type RngState } from './rng';
 import { scoreTurn, type TurnScore } from './scoring';
@@ -44,21 +44,37 @@ export interface Slot {
 export const NO_MARKER = -1;
 
 /**
- * Two kinds of marked cell. **Gems** open the Nook and count toward level
- * objectives; **stars** pay score.
+ * Three kinds of marked cell. **Gems** open the Nook and count toward level
+ * objectives; **stars** pay score; **charges** — drawn as flames — blow a hole
+ * in the board around them.
  *
  * Which ones appear depends on the policy:
  *
  * - `progression` (endless, Today's Nook) — gems while the Nook is sealed,
- *   stars once it is open. The board only ever holds one kind, because
- *   unlocking wipes the gems and stars only start afterwards.
- * - `mixed` (levels) — both, side by side. Levels hand you the Nook up front,
- *   so gems have no unlocking left to do and become objective currency.
+ *   then stars and flames once it is open. Unlocking wipes the gems, so the
+ *   board never holds a gem and a flame at the same time.
+ * - `mixed` (levels) — gems and stars, side by side, and deliberately no
+ *   flames: level goals are counted in gems and stars, so a third kind in the
+ *   pool is a tax on every collect-goal. Levels hand you the Nook up front, so
+ *   gems have no unlocking left to do and become objective currency.
  *
- * They are stored as two separate bitboards precisely because `mixed` breaks
- * the assumption that only one kind is ever on screen.
+ * They are stored as separate bitboards precisely because `mixed` breaks the
+ * assumption that only one kind is ever on screen.
  */
-export type MarkerKind = 'gem' | 'star';
+export type MarkerKind = 'gem' | 'star' | 'charge';
+
+/**
+ * A charge goes off. When a line clears through one, the surrounding 3x3 goes
+ * with it — cells that were not part of any completed line.
+ *
+ * Drawn as a flame, which is what the player calls it: the marker is the fuse,
+ * the line clearing through it is the light.
+ *
+ * It pays no points on its own, deliberately: the reward is the hole it opens,
+ * and that is what makes it a setup piece rather than a bonus. You start aiming
+ * charges at your worst cluster several moves before you can cash them.
+ */
+export const CHARGE_RADIUS = 1;
 
 export type MarkerPolicy = 'progression' | 'mixed';
 
@@ -68,6 +84,13 @@ export type MarkerPolicy = 'progression' | 'mixed';
  * most runs get there.
  */
 export const MARKER_ONE_IN = 12;
+
+/**
+ * Once markers are stars, one in this many is a charge instead. Kept rare:
+ * a charge is a 3x3 hole, and handing them out freely would flatten the board
+ * pressure the whole game runs on.
+ */
+export const CHARGE_ONE_IN = 3;
 
 export type Source = 'tray' | 'nook';
 
@@ -98,6 +121,8 @@ export interface PlacementEvent {
   readonly dealt: boolean;
   readonly gemsCleared: number;
   readonly starsCleared: number;
+  /** Charges that went off, and every cell their blast took with it. */
+  readonly chargesFired: number;
   /** Points those markers were worth. Zero for gems, which buy the Nook instead. */
   readonly starBonus: number;
   /** True on the one placement that opens the Nook. */
@@ -117,6 +142,7 @@ export interface RunStats {
   readonly placements: number;
   readonly gemsCleared: number;
   readonly starsCleared: number;
+  readonly chargesFired: number;
   /**
    * Best single clear, in lines, during each deal in order. One square per
    * entry in the shared grid, so a run reads at a glance without spoiling the
@@ -132,6 +158,7 @@ export const EMPTY_STATS: RunStats = {
   placements: 0,
   gemsCleared: 0,
   starsCleared: 0,
+  chargesFired: 0,
   dealClears: [],
 };
 
@@ -144,6 +171,8 @@ export interface GameState {
   readonly gems: Board;
   /** Board cells holding a star. Always a subset of `board`. */
   readonly stars: Board;
+  /** Board cells holding a charge. Always a subset of `board`. */
+  readonly charges: Board;
   readonly markerPolicy: MarkerPolicy;
   /** One marked cell per this many dealt pieces. */
   readonly markerOneIn: number;
@@ -170,6 +199,8 @@ export interface GameState {
   /** Last two deals, flattened, newest first. Feeds anti-repetition. */
   readonly recentShapes: readonly PieceId[];
   readonly fairDeal: boolean;
+  /** The week's Rearrange rule, or null in the ordinary modes. */
+  readonly mutator: Mutator | null;
   /** What the last placement did. Drives the HUD and the announcer. */
   readonly lastEvent: PlacementEvent | null;
 }
@@ -214,6 +245,8 @@ export interface NewGameOptions {
   readonly markerOneIn?: number;
   /** Rescues the run starts with. Defaults to `STARTING_KEYS`. */
   readonly keys?: number;
+  /** Rearrange's rule for the week. */
+  readonly mutator?: Mutator | null;
 }
 
 export function createGame(options: NewGameOptions): GameState {
@@ -228,6 +261,7 @@ export function createGame(options: NewGameOptions): GameState {
     colors: layout?.colors ?? new Uint8Array(CELLS),
     gems: EMPTY_BOARD,
     stars: EMPTY_BOARD,
+    charges: EMPTY_BOARD,
     markerPolicy: options.markerPolicy ?? 'progression',
     markerOneIn: options.markerOneIn ?? MARKER_ONE_IN,
     tray: [null, null, null],
@@ -245,6 +279,7 @@ export function createGame(options: NewGameOptions): GameState {
     dealCount: 0,
     recentShapes: [],
     fairDeal: options.fairDeal ?? false,
+    mutator: options.mutator ?? null,
     lastEvent: null,
   };
   return withEndCheck(deal(base));
@@ -264,8 +299,30 @@ export function anyLegalMove(state: GameState): boolean {
 }
 
 /** Does this specific held piece fit anywhere? Drives the dead-piece fade. */
+/**
+ * Memo for `slotFits`, which the renderer calls for every tray slot and the
+ * Nook on every frame — four full placement scans per frame, each looping up to
+ * 64 precomputed masks doing BigInt ANDs, to answer a question whose input only
+ * changes when a piece lands.
+ *
+ * Keyed by board, so it invalidates exactly when it should. Bounded because a
+ * long run produces thousands of distinct boards and this must not become a
+ * leak.
+ */
+const fitsMemo = new Map<string, boolean>();
+const FITS_MEMO_MAX = 512;
+
 export function slotFits(state: GameState, slot: Slot | null): boolean {
-  return slot !== null && fitsAnywhere(state.board, slot.piece);
+  if (slot === null) return false;
+
+  const key = `${state.board.toString(36)}:${slot.piece}`;
+  const hit = fitsMemo.get(key);
+  if (hit !== undefined) return hit;
+
+  const fits = fitsAnywhere(state.board, slot.piece);
+  if (fitsMemo.size >= FITS_MEMO_MAX) fitsMemo.clear();
+  fitsMemo.set(key, fits);
+  return fits;
 }
 
 /** Which marker, if any, is sitting on this board cell. */
@@ -276,7 +333,24 @@ export function markerAt(
 ): MarkerKind | null {
   if (isFilled(state.gems, x, y)) return 'gem';
   if (isFilled(state.stars, x, y)) return 'star';
+  if (isFilled(state.charges, x, y)) return 'charge';
   return null;
+}
+
+/** The 3x3 block centred on a cell, clipped to the board. */
+export function blastMask(cell: number): bigint {
+  const cx = cell % N;
+  const cy = Math.floor(cell / N);
+  let mask = 0n;
+  for (let dy = -CHARGE_RADIUS; dy <= CHARGE_RADIUS; dy++) {
+    for (let dx = -CHARGE_RADIUS; dx <= CHARGE_RADIUS; dx++) {
+      const x = cx + dx;
+      const y = cy + dy;
+      if (x < 0 || y < 0 || x >= N || y >= N) continue;
+      mask |= bit(x, y);
+    }
+  }
+  return mask;
 }
 
 const trayEmpty = (tray: ReadonlyArray<Slot | null>): boolean =>
@@ -306,6 +380,7 @@ function deal(state: GameState): GameState {
       progress: state.stats.placements,
       dealsSinceCombo: dealsSinceCombo(state.stats.dealClears),
       fairDeal: state.fairDeal,
+      mutator: state.mutator,
     },
     state.rngState,
   );
@@ -326,10 +401,25 @@ function deal(state: GameState): GameState {
       rng = afterCell;
       marker = cell;
 
-      if (state.markerPolicy === 'mixed') {
+      if (state.mutator === 'charged') {
+        // The week's rule wins over the policy: everything is a charge.
+        markerKind = 'charge';
+      } else if (state.markerPolicy === 'mixed') {
+        // Levels deal gems and stars only, and deliberately no flames.
+        //
+        // Level goals are counted in gems and stars, so anything else in the
+        // marker pool is a tax on every collect-goal in the game: a three-way
+        // split cut the supply of each by a third without any target moving to
+        // meet it. Flames belong where they cost nothing — endless and today.
         const [coin, afterCoin] = nextInt(rng, 2);
         rng = afterCoin;
         markerKind = coin === 0 ? 'gem' : 'star';
+      } else if (state.nookUnlocked) {
+        // Under progression the sealed half of a run belongs to gems, so
+        // charges only start once the Nook is open and stars have taken over.
+        const [coin, afterCoin] = nextInt(rng, CHARGE_ONE_IN);
+        rng = afterCoin;
+        markerKind = coin === 0 ? 'charge' : 'star';
       }
     }
 
@@ -367,9 +457,13 @@ interface Resolved {
   readonly board: Board;
   readonly gems: Board;
   readonly stars: Board;
+  readonly charges: Board;
   readonly lines: FullLines;
   readonly gemsCleared: number;
   readonly starsCleared: number;
+  readonly chargesFired: number;
+  /** Everything removed: the completed lines plus any blast that went with it. */
+  readonly swept: bigint;
   readonly unlockedNook: boolean;
   readonly turn: TurnScore;
 }
@@ -388,11 +482,13 @@ function resolve(
 ): Resolved {
   let gems = state.gems;
   let stars = state.stars;
+  let charges = state.charges;
   if (slot.marker !== NO_MARKER) {
     const offset = piece(slot.piece).cells[slot.marker];
     if (offset) {
       const at = bit(x + offset[0], y + offset[1]);
       if (slot.markerKind === 'gem') gems |= at;
+      else if (slot.markerKind === 'charge') charges |= at;
       else stars |= at;
     }
   }
@@ -404,13 +500,30 @@ function resolve(
   let board = placed;
   let gemsCleared = 0;
   let starsCleared = 0;
+  let chargesFired = 0;
+  let swept = 0n;
   if (clearedCount > 0) {
-    const cleared = lineMask(lines);
-    board = clearLines(placed, lines);
-    gemsCleared = popcount(gems & cleared);
-    starsCleared = popcount(stars & cleared);
-    gems &= ~cleared;
-    stars &= ~cleared;
+    swept = lineMask(lines);
+
+    // Any charge caught in a completed line takes its 3x3 with it. The blast
+    // is computed once, from the lines only — a charge thrown clear by another
+    // charge's blast does not chain. Cascades would make a placement's outcome
+    // very hard to read, and reading it is the whole game.
+    const fired = charges & swept;
+    if (fired !== 0n) {
+      chargesFired = popcount(fired);
+      for (let cell = 0; cell < CELLS; cell++) {
+        if ((fired & (1n << BigInt(cell))) === 0n) continue;
+        swept |= blastMask(cell);
+      }
+    }
+
+    board = placed & ~swept;
+    gemsCleared = popcount(gems & swept);
+    starsCleared = popcount(stars & swept);
+    gems &= ~swept;
+    stars &= ~swept;
+    charges &= ~swept;
   }
 
   // A gem opens the Nook — decided by the state *before* this placement, so a
@@ -423,9 +536,12 @@ function resolve(
     board,
     gems,
     stars,
+    charges,
     lines,
     gemsCleared,
     starsCleared,
+    chargesFired,
+    swept,
     unlockedNook,
     turn: scoreTurn(
       piece(slot.piece).size,
@@ -609,7 +725,18 @@ function doPlace(
   const mask = maskAt(slot.piece, x, y);
   if (mask === null || !canPlace(state.board, mask)) return state;
 
-  const { board, gems, stars, lines, turn, gemsCleared, starsCleared, unlockedNook } = resolve(
+  const {
+    board,
+    gems,
+    stars,
+    charges,
+    lines,
+    turn,
+    gemsCleared,
+    starsCleared,
+    chargesFired,
+    unlockedNook,
+  } = resolve(
     state,
     slot,
     x,
@@ -631,7 +758,8 @@ function doPlace(
           cell,
           color: colors[cell]!,
           hadMarker:
-            ((state.gems | state.stars) & (1n << BigInt(cell))) !== 0n,
+            ((state.gems | state.stars | state.charges) & (1n << BigInt(cell))) !==
+            0n,
         });
       }
       colors[cell] = 0;
@@ -657,6 +785,7 @@ function doPlace(
     colors,
     gems,
     stars,
+    charges,
     tray,
     nook,
     stats: {
@@ -666,6 +795,7 @@ function doPlace(
       placements: state.stats.placements + 1,
       gemsCleared: state.stats.gemsCleared + gemsCleared,
       starsCleared: state.stats.starsCleared + starsCleared,
+      chargesFired: state.stats.chargesFired + chargesFired,
       dealClears,
     },
     nookUnlocked: state.nookUnlocked || unlockedNook,
@@ -690,6 +820,7 @@ function doPlace(
       dealt: false,
       gemsCleared,
       starsCleared,
+      chargesFired,
       starBonus: turn.stars,
       unlockedNook,
     },
@@ -738,6 +869,7 @@ export function serialize(state: GameState): string {
     colors: Array.from(state.colors),
     gems: state.gems.toString(36),
     stars: state.stars.toString(36),
+    charges: state.charges.toString(36),
     tray: state.tray,
     nook: state.nook,
     nookUnlocked: state.nookUnlocked,
@@ -751,6 +883,7 @@ export function serialize(state: GameState): string {
     dealCount: state.dealCount,
     recentShapes: state.recentShapes,
     fairDeal: state.fairDeal,
+    mutator: state.mutator,
     stats: state.stats,
   });
 }

@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!--
+    One enamel block sitting in a brass-bezelled corner recess — the nook,
+    literally. One block, not a grid of them: this has to read at 40px, because
+    that is the only size that matters on a home screen.
+  -->
+  <defs>
+    <linearGradient id="felt" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#282C35"/>
+      <stop offset="1" stop-color="#1E212A"/>
+    </linearGradient>
+    <linearGradient id="enamel" x1="0" y1="0" x2="0.3" y2="1">
+      <stop offset="0" stop-color="#2A9D88"/>
+      <stop offset="1" stop-color="#166052"/>
+    </linearGradient>
+    <linearGradient id="brass" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#E0C079"/>
+      <stop offset="0.5" stop-color="#C8A24A"/>
+      <stop offset="1" stop-color="#9A7A2E"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="512" height="512" fill="url(#felt)"/>
+
+  <!-- The recess: darker than the felt, so the block reads as set *into* it. -->
+  <rect x="96" y="96" width="320" height="320" rx="44" fill="#161920"/>
+
+  <!-- The bezel. -->
+  <rect x="96" y="96" width="320" height="320" rx="44"
+        fill="none" stroke="url(#brass)" stroke-width="14"/>
+
+  <!-- The block, seated in the corner of the alcove with room above it. -->
+  <rect x="150" y="192" width="212" height="212" rx="30" fill="url(#enamel)"/>
+  <!-- Light catching the top edge — vitreous, not plastic. -->
+  <rect x="150" y="192" width="212" height="212" rx="30"
+        fill="none" stroke="#4FC7AE" stroke-width="7" stroke-opacity="0.55"/>
+</svg>

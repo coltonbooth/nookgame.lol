@@ -127,90 +127,6 @@ body {
   border-color: var(--brass);
 }
 
-#score-plate {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  padding: 4px 18px;
-  border-radius: 4px;
-  border: 1px solid rgb(200 162 74 / 0.35);
-  background: linear-gradient(180deg, #2b2f38, #22252c);
-}
-
-/* Dim at x1 so it reads as dormant rather than as decoration, and lights up
-   the moment a run starts. */
-.multiplier {
-  font-variant-numeric: tabular-nums;
-  font-size: 15px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  color: rgb(239 232 218 / 0.25);
-  transition: color 180ms ease;
-}
-
-.multiplier.is-on {
-  color: var(--enamel-saffron);
-}
-
-.multiplier.is-max {
-  color: var(--brass);
-  text-shadow: 0 0 10px rgb(200 162 74 / 0.55);
-}
-
-.multiplier.bump {
-  animation: multiplier-bump 320ms ease-out;
-}
-
-@keyframes multiplier-bump {
-  0% { transform: scale(1); }
-  35% { transform: scale(1.45); }
-  100% { transform: scale(1); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .multiplier.bump {
-    animation: none;
-  }
-}
-
-.score-digits {
-  /* Tabular figures matter here — non-tabular digits jitter as the score rolls. */
-  font-variant-numeric: tabular-nums;
-  font-feature-settings: 'tnum' 1;
-  font-size: 30px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  color: var(--ivory);
-}
-
-#run-indicator {
-  display: flex;
-  gap: 6px;
-  height: 8px;
-}
-
-.run-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: rgb(239 232 218 / 0.12);
-  border: 1px solid rgb(200 162 74 / 0.25);
-}
-
-.run-dot.lit {
-  background: var(--enamel-saffron);
-  border-color: var(--brass);
-}
-
-/* A key in hand, stated plainly. Knowing the rescue is there changes how a
-   tight board feels long before it's ever spent. */
-.keys {
-  margin: 0;
-  font-size: 12px;
-  letter-spacing: 0.08em;
-  color: var(--brass);
-}
-
 .key-action {
   color: #1a1d23;
   background: var(--brass);
@@ -233,6 +149,40 @@ body {
   /* Without this the browser steals the drag for scrolling. */
   touch-action: none;
   display: block;
+}
+
+/* One line of teaching at a time, sitting under the board and out of the way.
+   Never blocking, never modal, and gone for good once it has been learned. */
+.coach {
+  position: absolute;
+  bottom: calc(env(safe-area-inset-bottom) + 8px);
+  margin: 0;
+  padding: 7px 16px;
+  max-width: 88vw;
+  border-radius: 999px;
+  font-size: 13px;
+  letter-spacing: 0.01em;
+  text-align: center;
+  color: rgb(239 232 218 / 0.78);
+  background: rgb(0 0 0 / 0.4);
+  border: 1px solid rgb(200 162 74 / 0.22);
+  animation: coach-in 400ms ease-out;
+  pointer-events: none;
+}
+
+.coach[hidden] {
+  display: none;
+}
+
+@keyframes coach-in {
+  0% { opacity: 0; transform: translateY(6px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .coach {
+    animation: none;
+  }
 }
 
 /* --- Game over panel ------------------------------------------------- */
@@ -274,6 +224,78 @@ body {
   letter-spacing: 0.02em;
   color: rgb(239 232 218 / 0.45);
   font-variant-numeric: tabular-nums;
+}
+
+/* A record is the one moment the panel is allowed to be pleased with itself.
+   Brass, uppercase-spaced, and the score above it goes brass too. */
+.panel-record {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--brass);
+  font-variant-numeric: tabular-nums;
+  animation: record-in 520ms ease-out;
+}
+
+.panel.is-record .panel-score {
+  color: var(--brass);
+  text-shadow: 0 0 24px rgb(200 162 74 / 0.35);
+}
+
+@keyframes record-in {
+  0% { opacity: 0; transform: translateY(6px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+/* --- settings --------------------------------------------------------- */
+
+.mode-icon {
+  letter-spacing: 0.1em;
+  padding-inline: 10px;
+}
+
+.setting {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 15px;
+  color: var(--ivory);
+  cursor: pointer;
+}
+
+.setting input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--brass);
+  cursor: pointer;
+}
+
+.setting-note {
+  margin: 0;
+  max-width: 34ch;
+  font-size: 12px;
+  line-height: 1.5;
+  color: rgb(239 232 218 / 0.4);
+}
+
+.setting-keys b {
+  font-weight: 600;
+  color: rgb(239 232 218 / 0.62);
+}
+
+.panel-streak {
+  margin: 0;
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  color: var(--enamel-saffron);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .panel-record {
+    animation: none;
+  }
 }
 
 /* The shareable result, shown rather than described. Selectable on purpose —

@@ -34,3 +34,12 @@ export function dayNumber(date = new Date()): number {
   const local = Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
   return Math.floor((local - EPOCH) / DAY_MS) + 1;
 }
+
+/**
+ * Whole weeks since the epoch, for Rearrange's rotating slot. Uses the same
+ * frozen epoch as the day number, so the two never disagree about when a day
+ * begins.
+ */
+export function weekNumber(date = new Date()): number {
+  return Math.floor(dayNumber(date) / 7);
+}

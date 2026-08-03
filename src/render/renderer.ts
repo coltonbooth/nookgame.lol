@@ -5,8 +5,12 @@
 import { N, isFilled } from '../core/board';
 import type { MarkerKind, Preview, Slot, Source } from '../core/game';
 import { type GameState, markerAt, slotFits } from '../core/game';
+import { fogHides } from '../core/mutators';
 import { piece, type PieceId } from '../core/pieces';
+import { MAX_RUN_MULTIPLIER, runMultiplier } from '../core/scoring';
+import { reducedMotion } from '../platform/motion';
 import { Effects } from './effects';
+import { Roller } from './roller';
 import { computeLayout, trayCellFor, type Layout, type Rect } from './layout';
 import {
   BRASS,
@@ -42,7 +46,22 @@ export interface DragView {
 
 const DPR_CAP = 3;
 const GHOST_ALPHA = 0.35;
+
+/** Dots on the bezel: exactly the clears it takes to reach the multiplier cap. */
+const RUN_LIGHTS = (() => {
+  let run = 1;
+  while (runMultiplier(run) < MAX_RUN_MULTIPLIER && run < 32) run++;
+  return run;
+})();
 const DEAD_ALPHA = 0.4;
+
+/** How much wider than the dot the felt punch behind it is. */
+const PUNCH_SCALE = 1.75;
+/**
+ * Vertical room a run light may occupy above the board, as a fraction of the
+ * board's width. Mirrors `CROWN_RATIO` in the layout, which reserves it.
+ */
+const RUN_LIGHT_ROOM = 0.028;
 
 /** Pickup lift, per the game-feel checklist: ~1.15x with a shadow. */
 const LIFT_SCALE = 0.15;
@@ -56,9 +75,6 @@ function easeOutBack(t: number): number {
   return 1 + (c + 1) * Math.pow(t - 1, 3) + c * Math.pow(t - 1, 2);
 }
 
-const reducedMotion = (): boolean =>
-  typeof window.matchMedia === 'function' &&
-  window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 export class Renderer {
   private readonly ctx: CanvasRenderingContext2D;
@@ -67,6 +83,8 @@ export class Renderer {
 
   /** Pops, particles and shake. Owned here so the loop can ask if it's busy. */
   readonly effects = new Effects(reducedMotion);
+
+  private readonly roller = new Roller();
 
   layout: Layout;
 
@@ -122,6 +140,7 @@ export class Renderer {
     this.effects.draw(ctx, l, now);
     ctx.restore();
 
+    this.drawPlate(state, now);
     this.drawNook(state, view);
     this.drawTray(state, view);
     if (view) {
@@ -130,6 +149,151 @@ export class Renderer {
     }
 
     if (endProgress > 0) this.drawEnding(endProgress);
+  }
+
+  /** Point the odometer at a new score. Called when the state changes. */
+  setScore(score: number): void {
+    this.roller.set(score);
+  }
+
+  /** Jump the odometer with no roll — a fresh run, not a scoring event. */
+  resetScore(score: number): void {
+    this.roller.reset(score);
+  }
+
+  /** True while the digits are still moving, so the loop keeps drawing. */
+  get rolling(): boolean {
+    return this.roller.rolling;
+  }
+
+  /**
+   * The engraved brass plate, and the signature object of the whole design:
+   * "the score isn't a number in a corner. It's an engraved brass plate below
+   * the board where digits roll like a mechanical odometer."
+   *
+   * The multiplier sits on the plate beside the score, and the keys ride the
+   * right-hand end — everything about the run's state in one physical object
+   * rather than scattered across DOM chrome above the board.
+   */
+  private drawPlate(state: GameState, now: number): void {
+    const { ctx } = this;
+    const p = this.layout.plate;
+    const radius = p.h * 0.22;
+
+    ctx.save();
+
+    // The plate itself: brass, lit from above, sunk very slightly into the felt.
+    const metal = ctx.createLinearGradient(0, p.y, 0, p.y + p.h);
+    metal.addColorStop(0, '#3A3D46');
+    metal.addColorStop(1, '#2A2D35');
+    roundRect(ctx, p.x, p.y, p.w, p.h, radius);
+    ctx.fillStyle = metal;
+    ctx.fill();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = 'rgba(200, 162, 74, 0.5)';
+    ctx.stroke();
+
+    const mid = p.y + p.h / 2;
+    const pad = p.h * 0.34;
+    const value = this.roller.read(now).toLocaleString('en-US');
+
+    ctx.textBaseline = 'middle';
+
+    // Keys ride the left end. Knowing the rescue is there changes how a tight
+    // board feels long before it is ever spent.
+    if (state.keys > 0) {
+      ctx.font = `600 ${Math.round(p.h * 0.26)}px ui-sans-serif, system-ui, sans-serif`;
+      ctx.textAlign = 'left';
+      ctx.fillStyle = BRASS;
+      ctx.fillText(state.keys === 1 ? 'key' : `${state.keys} keys`, p.x + pad, mid);
+    }
+
+    // The multiplier holds the right end, dormant at ×1 and lit the moment a
+    // run starts. Score in the middle, so the plate reads left-to-right as
+    // what you're holding, what you've scored, what it's worth.
+    const m = runMultiplier(state.run);
+    ctx.font = `700 ${Math.round(p.h * 0.3)}px ui-sans-serif, system-ui, sans-serif`;
+    ctx.textAlign = 'right';
+    ctx.fillStyle =
+      state.run <= 0
+        ? 'rgba(239, 232, 218, 0.22)'
+        : m >= MAX_RUN_MULTIPLIER
+          ? BRASS
+          : '#E0A032';
+    ctx.fillText(`×${m}`, p.x + p.w - pad, mid);
+
+    // Engraved: a dark impression offset down, then the ivory face on top.
+    // Shrunk to fit if a long score would otherwise run into either end.
+    const room = p.w - pad * 4.4;
+    let digits = Math.round(p.h * 0.52);
+    ctx.font = `600 ${digits}px ui-sans-serif, system-ui, sans-serif`;
+    const width = ctx.measureText(value).width;
+    if (width > room) {
+      digits = Math.max(10, Math.floor(digits * (room / width)));
+      ctx.font = `600 ${digits}px ui-sans-serif, system-ui, sans-serif`;
+    }
+
+    ctx.textAlign = 'center';
+    const cx = p.x + p.w / 2;
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+    ctx.fillText(value, cx, mid + Math.max(1, p.h * 0.035));
+    ctx.fillStyle = IVORY;
+    ctx.fillText(value, cx, mid);
+
+    ctx.restore();
+  }
+
+  /**
+   * The run, as filled enamel dots along the top bezel — the other half of the
+   * design's signature, and the reason the streak is finally something you feel
+   * rather than a number you would have to go looking for.
+   *
+   * On the bezel rather than above it: the run belongs to the board.
+   */
+  private drawRunLights(state: GameState, now: number): void {
+    const { ctx } = this;
+    const b = this.layout.board;
+
+    const dots = RUN_LIGHTS;
+    // The felt punch is the widest part of a light, so it — not the dot — is
+    // what has to fit inside the crown `computeLayout` reserved above the
+    // board. Sized from that budget rather than guessed at independently.
+    const room = b.w * RUN_LIGHT_ROOM;
+    const r = Math.max(2, Math.min(b.cell * 0.075, room / PUNCH_SCALE));
+    const spacing = r * 3.2;
+    const totalW = spacing * (dots - 1);
+    const cx0 = b.x + b.w / 2 - totalW / 2;
+    const cy = b.y;
+
+    for (let i = 0; i < dots; i++) {
+      const lit = i < state.run;
+      const cx = cx0 + spacing * i;
+
+      // Punch the felt back in behind each dot so it reads as set into the
+      // bezel rather than floating on top of the stroke.
+      ctx.beginPath();
+      ctx.arc(cx, cy, r * PUNCH_SCALE, 0, Math.PI * 2);
+      ctx.fillStyle = FELT;
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      if (lit) {
+        // The newest dot breathes, so a climbing run is visible in motion.
+        const newest = i === state.run - 1 && !reducedMotion();
+        const pulse = newest ? 0.85 + 0.15 * Math.sin(now / 170) : 1;
+        ctx.fillStyle = i >= dots - 1 ? BRASS : '#E0A032';
+        ctx.globalAlpha = pulse;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      } else {
+        ctx.fillStyle = 'rgba(239, 232, 218, 0.1)';
+        ctx.fill();
+      }
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = 'rgba(200, 162, 74, 0.35)';
+      ctx.stroke();
+    }
   }
 
   /**
@@ -170,6 +334,8 @@ export class Renderer {
     ctx.strokeStyle = 'rgba(200, 162, 74, 0.55)';
     ctx.stroke();
 
+    this.drawRunLights(state, now);
+
     // Empty wells, so the grid reads as a physical object rather than lines.
     ctx.fillStyle = 'rgba(255, 255, 255, 0.028)';
     for (let y = 0; y < N; y++) {
@@ -193,6 +359,22 @@ export class Renderer {
         if (color === 0 || !isFilled(state.board, x, y)) continue;
         const px = b.x + x * b.cell;
         const py = b.y + y * b.cell;
+
+        // A cell that just landed overshoots home rather than appearing.
+        const scale = this.effects.landScale(y * N + x, now);
+        if (scale !== 1) {
+          const inset = (b.cell * (1 - scale)) / 2;
+          const size = b.cell * scale;
+          ctx.save();
+          this.blit(sheet, color, px + inset, py + inset, size);
+          const settling = markerAt(state, x, y);
+          if (settling) {
+            this.blitMarker(sheet, settling, px + inset, py + inset, size);
+          }
+          ctx.restore();
+          continue;
+        }
+
         this.blit(sheet, color, px, py, b.cell);
         const marker = markerAt(state, x, y);
         if (marker) this.blitMarker(sheet, marker, px, py, b.cell);
@@ -344,7 +526,10 @@ export class Renderer {
       return;
     }
 
-    this.drawPieceIn(r, state.nook, 1);
+    // A stashed piece that no longer fits fades exactly like a tray piece.
+    // It used to be pinned at full opacity, which quietly made the Nook the one
+    // place the game wouldn't tell you the truth about your outs.
+    this.drawPieceIn(r, state.nook, slotFits(state, state.nook) ? 1 : DEAD_ALPHA);
   }
 
   // --- tray --------------------------------------------------------------
@@ -355,9 +540,41 @@ export class Renderer {
       if (!slot) return;
       if (view?.hideSource && view.source === 'tray' && view.index === i) return;
 
+      // Fog: the piece is real and placeable, you simply cannot read it yet.
+      // Drawn as a covered slot rather than an empty one, so it is obvious
+      // something is there and obvious that you are not allowed to plan it.
+      if (fogHides(state.mutator, i, state.tray)) {
+        this.drawFogged(rect);
+        return;
+      }
+
       // Dead pieces fade — vital readability, and it builds dread beautifully.
       this.drawPieceIn(rect, slot, slotFits(state, slot) ? 1 : DEAD_ALPHA);
     });
+  }
+
+  /** A slot under fog: something is in there, and you cannot see what. */
+  private drawFogged(rect: Rect): void {
+    const { ctx } = this;
+    const inset = rect.w * 0.14;
+
+    ctx.save();
+    roundRect(ctx, rect.x + inset, rect.y + inset, rect.w - inset * 2, rect.h - inset * 2, rect.w * 0.14);
+    ctx.fillStyle = 'rgba(239, 232, 218, 0.05)';
+    ctx.fill();
+    ctx.setLineDash([rect.w * 0.06, rect.w * 0.05]);
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = 'rgba(200, 162, 74, 0.4)';
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.globalAlpha = 0.4;
+    ctx.fillStyle = IVORY;
+    ctx.font = `${Math.round(rect.h * 0.3)}px ui-sans-serif, system-ui, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('?', rect.x + rect.w / 2, rect.y + rect.h / 2);
+    ctx.restore();
   }
 
   // --- the piece under the pointer ---------------------------------------
@@ -386,12 +603,31 @@ export class Renderer {
     // finger on screen it would otherwise be indistinguishable from a placed
     // one. Nothing in range: tint invalid rather than hiding the piece —
     // silent failure just confuses.
+    const homeless = !view.snap && !view.overNook;
     ctx.globalAlpha = view.hideSource ? 1 : 0.72;
-    if (!view.snap && !view.overNook) ctx.globalAlpha = 0.55;
+    if (homeless) ctx.globalAlpha = 0.55;
 
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.45)';
-    ctx.shadowBlur = cell * 0.35;
-    ctx.shadowOffsetY = cell * 0.12;
+    // The shadow used to be a real `shadowBlur` on each of up to five blits.
+    // Canvas shadow blur is among the most expensive 2D operations on mobile
+    // GPUs, and it ran every frame of every drag — precisely when the frame
+    // budget matters most. A flat offset silhouette reads the same at a
+    // fraction of the cost.
+    ctx.save();
+    ctx.globalAlpha *= 0.28;
+    ctx.fillStyle = '#000';
+    const drop = cell * 0.1;
+    for (const [dx, dy] of p.cells) {
+      roundRect(
+        ctx,
+        view.ghostX + dx * cell,
+        view.ghostY + dy * cell + drop,
+        cell,
+        cell,
+        cell * 0.18,
+      );
+      ctx.fill();
+    }
+    ctx.restore();
 
     p.cells.forEach(([dx, dy], i) => {
       const px = view.ghostX + dx * cell;
@@ -399,6 +635,29 @@ export class Renderer {
       this.blit(sheet, view.color, px, py, cell);
       if (i === view.marker) this.blitMarker(sheet, view.markerKind, px, py, cell);
     });
+
+    // Nothing in range: wash the piece toward oxblood so refusal is a colour,
+    // not just a slightly lower opacity nobody notices.
+    //
+    // Painted over the piece's own cells with ordinary alpha. A `source-atop`
+    // composite would be the obvious way to do this and is wrong — it works
+    // against everything already on the canvas, so it tinted the whole board
+    // red wherever the rectangle happened to fall.
+    if (homeless) {
+      ctx.globalAlpha = 0.4;
+      ctx.fillStyle = '#A32E3E';
+      for (const [dx, dy] of p.cells) {
+        roundRect(
+          ctx,
+          view.ghostX + dx * cell,
+          view.ghostY + dy * cell,
+          cell,
+          cell,
+          cell * 0.18,
+        );
+        ctx.fill();
+      }
+    }
     ctx.restore();
   }
 
@@ -443,7 +702,9 @@ export class Renderer {
     y: number,
     size: number,
   ): void {
-    this.ctx.drawImage(kind === 'star' ? sheet.star : sheet.gem, x, y, size, size);
+    const sprite =
+      kind === 'star' ? sheet.star : kind === 'charge' ? sheet.charge : sheet.gem;
+    this.ctx.drawImage(sprite, x, y, size, size);
   }
 }
 

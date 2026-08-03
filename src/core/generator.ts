@@ -26,6 +26,7 @@ import {
   N,
   type Board,
 } from './board';
+import { allowsPiece, type Mutator } from './mutators';
 import { PIECES, type PieceId } from './pieces';
 import { nextInt, weightedPick, type RngState } from './rng';
 
@@ -122,6 +123,8 @@ export interface DealContext {
   readonly dealsSinceCombo: number;
   /** Fair Deal turns off all adaptive assistance. */
   readonly fairDeal: boolean;
+  /** Rearrange's rule for the week, which can take shapes out of the bag. */
+  readonly mutator?: Mutator | null;
 }
 
 export interface DealResult {
@@ -637,7 +640,13 @@ const enum Tier {
  * so a drought actively ends rather than waiting for the weights to fix it.
  */
 export function dealThree(ctx: DealContext, rngState: RngState): DealResult {
-  const weights = dealWeights(ctx.board, ctx.progress, ctx.fairDeal);
+  const base = dealWeights(ctx.board, ctx.progress, ctx.fairDeal);
+  // Spare takes the small shapes out of the bag entirely. Applied after the
+  // adaptive weighting rather than inside it, so the mutator is a hard rule
+  // about what exists rather than one more signal competing with the others.
+  const weights = ctx.mutator
+    ? base.map((w, id) => (allowsPiece(ctx.mutator ?? null, id) ? w : 0))
+    : base;
   const repeated = repeatedShapes(ctx.recentShapes);
 
   // Nothing can clear on an open board, so don't pay for a payoff search that

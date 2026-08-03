@@ -169,6 +169,15 @@ let dirty = true;
 
 // Only once `dirty` exists: `applyPrefs` touches it, and running this any
 // earlier is a temporal-dead-zone error that aborts the rest of module init.
+//
+// `applyPrefs` has to come *first*, before the panel reads its initial values.
+// It is what pushes the stored preference into `setReducedMotion`, and until it
+// has run `reducedMotionOverride()` is still null — so the panel below fell
+// back to the system setting and rendered the box unticked for anyone who had
+// actually turned reduced motion on. The setting stayed in force, the UI said
+// it was off, and there was no way to turn it back off through the panel.
+applyPrefs();
+
 settings.set({
   sound: prefs.sound,
   haptics: prefs.haptics,
@@ -177,7 +186,6 @@ settings.set({
 });
 // Vibration is Android-only; a dead toggle is worse than no toggle.
 settings.setHapticsSupported(hapticsAvailable());
-applyPrefs();
 
 const drag = new DragController({
   getState: () => state,

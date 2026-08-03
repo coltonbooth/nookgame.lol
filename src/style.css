@@ -129,12 +129,6 @@ body {
   border-color: var(--brass);
 }
 
-.key-action {
-  color: #191324;
-  background: var(--brass);
-  border-color: var(--brass);
-}
-
 /* --- Stage ----------------------------------------------------------- */
 
 /* The wrapper does the flexing; the canvas is sized in script to match it.
@@ -360,10 +354,19 @@ body {
   display: none;
 }
 
+/* Up to five buttons can be live at once — rescue, restart, next level, copy,
+   share, challenge. On a phone that is far more than one line will hold, and
+   without wrapping the row simply overflowed the viewport in both directions:
+   the leftmost button was sliced off the screen edge and the rightmost pushed
+   out past it. Wrap, centre, and keep the row inside the same width as the
+   share block above it. */
 .panel-actions {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   gap: 10px;
   margin-top: 10px;
+  max-width: min(94vw, 460px);
 }
 
 .panel-note {
@@ -382,19 +385,19 @@ body {
   display: none;
 }
 
-#next-level {
-  border-color: var(--brass);
-  color: #191324;
-  background: var(--brass);
-}
-
+/* Every button in the panel, including `#duel` — which was missing from this
+   list and so rendered as a native white pill against a dark panel. */
 #restart,
 #next-level,
 #copy,
-#share {
-  padding: 10px 26px;
+#share,
+#duel,
+#close-settings,
+.key-action {
+  padding: 10px 22px;
   font: inherit;
   font-size: 16px;
+  white-space: nowrap;
   color: var(--ivory);
   background: transparent;
   border: 1px solid rgb(240 185 58 / 0.5);
@@ -402,9 +405,39 @@ body {
   cursor: pointer;
 }
 
+/* Six buttons will not fit two to a line on a small phone at full padding. */
+@media (max-width: 420px) {
+  #restart,
+  #next-level,
+  #copy,
+  #share,
+  #duel,
+  #close-settings,
+  .key-action {
+    padding: 9px 14px;
+    font-size: 15px;
+  }
+}
+
+/* The two gold buttons — the ones the machine wants pressed. These have to come
+   *after* the shared rule above: they carry the same specificity, so declaring
+   them earlier let the shared `background: transparent` win and quietly undo
+   them. `#next-level` had exactly that bug and has been rendering as a plain
+   outlined button rather than the gold one it was written to be. */
+#next-level,
+.key-action {
+  color: #191324;
+  background: var(--brass);
+  border-color: var(--brass);
+  font-weight: 700;
+  box-shadow: 0 0 18px rgb(240 185 58 / 0.4);
+}
+
 #restart:hover,
 #copy:hover,
-#share:hover {
+#share:hover,
+#duel:hover,
+#close-settings:hover {
   background: rgb(240 185 58 / 0.14);
 }
 
@@ -414,12 +447,6 @@ body {
   color: var(--brass);
 }
 
-/* The gold buttons glow. They are the ones the machine wants you to press. */
-#next-level,
-.key-action {
-  font-weight: 700;
-  box-shadow: 0 0 18px rgb(240 185 58 / 0.4);
-}
 
 /* --- a11y ------------------------------------------------------------ */
 

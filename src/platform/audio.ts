@@ -26,6 +26,31 @@ const MASTER_GAIN = 0.34;
 const PENTATONIC = [0, 2, 4, 7, 9];
 const BASE_HZ = 392; // G4
 
+/**
+ * Tell iOS this is playback audio rather than ambient audio.
+ *
+ * **This is why the game was silent on iPhones.** Safari puts Web Audio in the
+ * "ambient" audio session by default, and ambient audio is silenced by the
+ * hardware ring/silent switch — so a phone with the switch flipped (which is
+ * most phones, most of the time) played the game in total silence with no error
+ * and nothing in the console to explain it. Declaring the session as `playback`
+ * opts out of that, exactly as a video or a music player does.
+ *
+ * Safari 16.4+; a no-op everywhere else, which is fine because no other browser
+ * has the problem.
+ */
+function claimPlaybackSession(): void {
+  const session = (
+    navigator as unknown as { audioSession?: { type: string } }
+  ).audioSession;
+  if (!session) return;
+  try {
+    session.type = 'playback';
+  } catch {
+    // Not fatal — it just means the silent switch still wins.
+  }
+}
+
 function create(): AudioContext | null {
   if (ctx) return ctx;
   const Ctor: Ctor | undefined =
@@ -34,6 +59,8 @@ function create(): AudioContext | null {
   if (!Ctor) return null;
 
   try {
+    // Before the context exists, so the session is set when it is created.
+    claimPlaybackSession();
     ctx = new Ctor();
     master = ctx.createGain();
     master.gain.value = MASTER_GAIN;
@@ -53,17 +80,54 @@ export function unlockAudio(): void {
   if (!context) return;
   if (context.state === 'suspended') void context.resume();
 
+  // Play one silent sample inside the gesture. iOS treats a context that has
+  // never had a source started as still locked, however healthy `state` looks,
+  // and `resume()` alone does not always settle it.
+  if (!primed) {
+    primed = true;
+    try {
+      const silence = context.createBufferSource();
+      silence.buffer = context.createBuffer(1, 1, context.sampleRate);
+      silence.connect(context.destination);
+      silence.start(0);
+    } catch {
+      // Nothing to do; the ordinary path may still work.
+    }
+  }
+
   if (!watchingVisibility) {
     watchingVisibility = true;
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible' && ctx?.state === 'suspended') {
         void ctx.resume();
       }
+      // Coming back from the background can drop the session back to ambient.
+      if (document.visibilityState === 'visible') claimPlaybackSession();
     });
   }
 }
 
 let watchingVisibility = false;
+let primed = false;
+
+/**
+ * A backstop on the document itself, armed at load.
+ *
+ * The game unlocks from `pointerdown` on the canvas, which misses anyone whose
+ * first touch lands on a mode tab or the settings button — and on iOS that one
+ * missed gesture is the difference between a game with sound and a game
+ * without, because there is no second chance to create the context under a
+ * gesture until the player happens to touch the board.
+ *
+ * Registered here rather than inside `unlockAudio` on purpose: putting it there
+ * means it only ever arms *after* something has already unlocked successfully,
+ * which is precisely the case it exists to cover.
+ */
+if (typeof document !== 'undefined') {
+  for (const type of ['pointerdown', 'touchend', 'keydown'] as const) {
+    document.addEventListener(type, () => unlockAudio(), { passive: true });
+  }
+}
 
 export function setAudioEnabled(value: boolean): void {
   enabled = value;

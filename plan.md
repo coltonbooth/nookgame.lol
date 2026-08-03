@@ -11,7 +11,9 @@ A complete plan for building a mobile-first block puzzle game as a static websit
 
 ## 0. The name, and what it buys you
 
-*Nook* names the feeling rather than the objects — quiet, warm, small-and-satisfying. That gives you a consistent voice for the whole product, and it lets the signature mechanic share the name of the game itself, which is a stronger bit of design than a descriptive title would have been.
+*Nook* names the thing rather than the genre — the alcove every piece is looking for. It lets the signature mechanic share the name of the game itself, which is a stronger bit of design than a descriptive title would have been, and it is short enough that the score stays the loudest thing in a shared result.
+
+The name was originally chosen for its *softness* — "quiet, warm, small-and-satisfying". It survives the turn to a loud presentation because the tension is now doing useful work: a game called Nook that pays out in bells and coins is more memorable than either half on its own, and the word is still what the mechanic is actually about.
 
 **Lockup:** `Nook — Block Puzzle`. The subtitle carries the search work; the brand carries the memory. Use the full lockup in the page title, meta description, and any store listing. Use bare **Nook** everywhere inside the game.
 
@@ -27,9 +29,16 @@ A complete plan for building a mobile-first block puzzle game as a static websit
 | Full board clear | **swept clean** |
 | Game over | **nowhere left to put it** |
 
-**Voice.** Lowercase, gentle, never exclamatory. No "GAME OVER!", no "AMAZING!!", no confetti-cannon copy. The category is uniformly shouty; being calm is free differentiation. Errors and empty states stay in the same register — plain, direct, unbothered.
+**Voice.** Loud. The game is a machine that pays out, and it says so: `BIG WIN`, `MEGA WIN`, `JACKPOT`, `NEW RECORD`, `CASHED OUT`. Every clear is celebrated and the celebration escalates — the ladder is about *how much*, never about whether.
 
-**Icon.** A single enamel block sitting in a brass-bezelled corner recess — the nook, literally. One block, not a grid of them. It has to read at 40px, because that is the only size that matters on a home screen.
+Two carve-outs, and they are not softness, they are legibility:
+
+- **The screen-reader announcer stays lowercase and plain.** A synthesiser reading `JACKPOT!!!` aloud is not exciting; it is punctuation being spelled out over the top of the numbers that matter. See `src/ui/hud.ts`.
+- **Controls stay readable.** Settings labels, mode tabs and the coach line are not results. Volume belongs on the score, the record and the buttons the machine wants pressed.
+
+> **This reverses the original direction.** The first version of this document specified the opposite — "lowercase, gentle, never exclamatory… the category is uniformly shouty; being calm is free differentiation" — and the game was built that way. It is recorded here rather than quietly deleted because the calm argument was a reasonable one and the reversal was a deliberate call, not drift. Anyone reconsidering it should know it was a road already taken.
+
+**Icon.** A single backlit block sitting in a gold-bezelled corner recess — the nook, literally. One block, not a grid of them. It has to read at 40px, because that is the only size that matters on a home screen.
 
 > **One flag before the logo.** *Nook* is Barnes & Noble's e-reader and is registered in the software class, and you'll be sharing search results with Animal Crossing's Tom Nook. A browser puzzle game is unlikely to trouble either, and "nook" is a common English word so the protection isn't absolute — but this is a higher-collision name than the alternatives. Worth a real clearance check before you commit to artwork. I'm not a lawyer; thirty minutes with one is cheap insurance here.
 
@@ -75,14 +84,28 @@ Store each piece as a list of `[dx, dy]` offsets plus its bounding box. Weights 
 
 ```
 placementPoints = cellsInPiece                    // 1 per cell
-lineBonus       = 10 * L * (L + 1) / 2            // L = lines cleared this placement
-                                                   // 1→10, 2→30, 3→60, 4→100, 5→150
-runMultiplier   = min(1 + 0.5 * (run - 1), 5)     // run = consecutive placements
+lineBonus       = 10 * L * (L + 1)                // L = lines cleared this placement
+                                                   // 1→20, 2→60, 3→120, 4→200, 5→300
+runMultiplier   = min(1 + run, 10)                // run = consecutive placements
                                                    // that cleared ≥1 line
-turnScore = placementPoints + lineBonus * runMultiplier
+turnScore = placementPoints + (lineBonus + starBonus) * runMultiplier + jackpot
 ```
 
-`run` increments on any placement that clears at least one line and **resets to 0** on a placement that clears nothing. Cap the multiplier so late-game scores don't run away.
+A whole point of multiplier per step, topping out at **×10** after a streak of nine. Whole steps also mean every total is an integer for free.
+
+`run` increments on any placement that clears at least one line. It does **not** reset on a placement that clears nothing: one placement of grace, then a decay of one step per turn, never to zero. The reset originally specified here made combinations strictly irrational — clearing one line a turn out-paid spending three turns arranging a triple, and players could feel the game only ever gave them singles. See the note in `src/core/scoring.ts`.
+
+### The jackpot meter
+
+A bank that fills across a run and pays out. Every cleared line banks one, and at **12** the meter fills, pays `500 × runMultiplier`, and resets — carrying any overflow, so a triple that fills it from 10 leaves one already banked.
+
+Three properties make it work, and all three are load-bearing:
+
+- **It only goes up.** The run decays; the bank never does. A meter you can lose is a meter you stop watching.
+- **The payout rides the multiplier.** 500 cold is 1,000; 500 at ×10 is 5,000. Arriving at a full meter *hot* is the single biggest decision in a run.
+- **It is visible, and visibly nearly-full.** A gold bar along the bottom bezel, throbbing from two lines out, with a stepped riser in the audio. Anticipation is what a casino actually sells; the payout is only the receipt.
+
+It is deliberately slow — roughly one payout every couple of minutes. A jackpot you hit every deal is not a jackpot, it is a line bonus with a louder sound.
 
 ### Nowhere left to put it
 After every placement, check whether **any** remaining piece — tray *or* Nook — fits **anywhere**. If none do, the run ends. Check after each placement, not only when the tray empties.
@@ -127,7 +150,10 @@ longest run ×4.5 · swept clean twice
 A short brand name means the score stays the loudest thing in the line. Endless remains the default mode; Today's Nook is the reason to come back tomorrow.
 
 **Live clear preview**
-While dragging over a legal position, highlight the rows and columns that *would* clear and show the points that placement would score. Pure UX, but it makes the game vastly more readable on a small screen and teaches the run system without a tutorial.
+While dragging over a legal position, highlight the rows and columns that *would* clear and show the points that placement would score. Pure UX, but it makes the game vastly more readable on a small screen and teaches the run system without a tutorial. The preview also reports `wouldJackpot`, which turns the last two lines of a meter into a decision about *which* clear to take rather than a surprise after the fact.
+
+**The jackpot meter**
+Specified in §1. Shipped, and the reason the game reads as a machine rather than a puzzle with sound effects.
 
 ### Tier 2 — the differentiators, ship after launch
 
@@ -158,7 +184,9 @@ Share a link containing a seed. Both players get the identical sequence and play
 **Fair Deal toggle** — expose the generator. Fair Deal turns off all adaptive assistance and gives pure weighted-random pieces. Most games in this genre quietly manipulate the bag and players resent discovering it. Being upfront is a real trust signal, and the hardcore leaderboard should be Fair-only.
 
 ### Deliberately not doing
-Timers, energy systems, lives, mid-run ads, rotation, forced tutorials. The reason this genre works is that it's calm — and calm is the entire brand.
+Timers, energy systems, lives, mid-run ads, rotation, forced tutorials.
+
+The list is unchanged by the turn to a loud presentation, and that is the point: **loud is not the same thing as predatory.** Nook borrows a casino's *feedback* — the bells, the coins, the meter you can watch filling — and none of its economics. Nothing here costs money, nothing expires, nothing nags you to come back, and the jackpot is a function of how you played rather than of what you spent. Keys are still earned and never sold. If any item on that list ever starts to look reasonable, the reason will be that the volume was mistaken for a licence.
 
 ---
 
@@ -296,8 +324,10 @@ Re-run on `ResizeObserver`. Pre-render each block face once to an offscreen canv
 
 ### Haptics and audio
 - `navigator.vibrate(8)` on placement, a short pattern on a clear. Android Chrome only — **iOS Safari does not support the Vibration API**, so treat it as a bonus, never a foundation.
-- Web Audio with short pre-decoded buffers, never `<audio>` elements. Create or resume the `AudioContext` inside the first user gesture or iOS keeps it suspended.
-- Rising pitch per run step is the cheapest dopamine in game design. Ship it — but keep it soft. Nook is not a slot machine.
+- Web Audio, fully synthesised — no asset files at all. Create or resume the `AudioContext` inside the first user gesture or iOS keeps it suspended.
+- Rising pitch per run step is the cheapest dopamine in game design. Ship it, and ship it loud: coins, bells and a stepped riser when the meter is nearly full. Nook *is* a slot machine.
+- **Two hard rules, learned the embarrassing way.** Pitch glides (`to:`) only ever on notes under ~0.1s, and detune only ever under ~6 cents. A slow portamento over a long note on a rich waveform is not a siren, it is a *moan* — and a sustained detuned sawtooth is the same problem. Long notes hold their pitch; anything that needs to sound like a machine gets there through percussion and filtered noise, not through sliding. The riser is deliberately *stepped* for exactly this reason.
+- The pentatonic walk stays. It has nothing to do with volume — it is what stops a nine-step streak turning into noise.
 
 ### Desktop and accessibility
 Same pointer code handles mouse. Add keyboard control, which serves power users and screen-reader users equally:
@@ -317,11 +347,12 @@ The mechanics are 20% of why this genre is addictive. This is the other 80%.
 - [ ] Rows/columns that *would* clear pulse while dragging
 - [ ] Placement snaps home with a short overshoot ease (~120ms)
 - [ ] Cleared blocks **scale up briefly, then pop**, staggered ~15ms per cell outward from the placement — the stagger is what makes it feel like a wave
-- [ ] Particle burst per cleared cell, tinted to that cell's colour
-- [ ] Score **rolls up** over ~400ms rather than jumping
-- [ ] Screen shake, tiny (2–4px), only on 3+ line clears
-- [ ] Run counter lights along the bezel; escalating pitch per step
-- [ ] Stashing to the Nook has its own soft, distinct sound — a small *tuck*
+- [ ] Particle burst per cleared cell, tinted to that cell's colour, with **every third particle a tumbling gold coin**
+- [ ] Score **rolls up** over ~400ms rather than jumping — and **spins like a reel** before landing, on a jackpot only. A machine that makes a production of every placement is exhausting inside a deal; a payout is rare enough to earn one.
+- [ ] Screen shake on **every** clear, 7px at full strength, scaled by lines and streak. The old floor of three lines meant the most common clear in the game landed with no impact at all.
+- [ ] Run counter lights along the bezel, nine of them; escalating pitch per step
+- [ ] Jackpot meter along the *bottom* bezel, throbbing from two lines out
+- [ ] Stashing to the Nook has its own distinct sound — a quick mechanical clunk
 - [ ] Tray pieces **fade to 40% when they no longer fit anywhere** — vital readability, and it builds dread beautifully
 - [ ] Swept clean is rare; make the celebration count
 - [ ] Ending: board fades to greyscale over ~600ms *before* the panel appears. Let the moment land.
@@ -333,22 +364,26 @@ The mechanics are 20% of why this genre is addictive. This is the other 80%.
 
 Most games in this genre look like glossy candy plastic. Go elsewhere so Nook is recognisable in a screenshot.
 
-**Direction: enamel pin.** Blocks are vitreous enamel set in brass cells — deep, saturated, slightly uneven colour in a thin metal bezel, recessed into a slate-felt board. Tactile and jewel-like rather than bouncy. Clearing reads as the enamel cracking with light coming through from beneath. The Nook is a genuine alcove cut into the frame — same brass bezel, deeper shadow.
+**Direction: neon & chrome.** Blocks are backlit acrylic jewels with a hot gold rim-light, sunk into a dark plum lacquer table. Lit from *within* rather than lit from above — a radial gradient with its hot spot in the middle of the face, not a vertical one brightest along the top edge. The Nook is a genuine alcove cut into the frame; the score is an engraved plate in a gold bezel; the meter is a gold bar along the bottom.
 
 ```
-Felt background   #23262E
-Board recess      #1A1D23
-Brass bezel       #C8A24A
-Enamel viridian   #1E7A6A
-Enamel cobalt     #2B5FBF
-Enamel oxblood    #A32E3E
-Enamel saffron    #E0A032
-Ivory (text)      #EFE8DA
+Table background  #191324
+Board recess      #241C33
+Gold bezel        #F0B93A
+Magenta           #E23C86
+Cyan              #2FB6D9
+Lime              #7FC94A
+Gold              #EDA531
+Bone (text)       #F7EEDD
 ```
+
+> **Rich, not fluorescent — and this matters more than it sounds.** The first pass at this palette used full-saturation neon (`#FF2D95`, `#00E5FF`, `#B6FF3D`) on near-black `#0B0710`, and it was genuinely painful to look at: with no mid-tone anywhere the eye has nothing to rest on. Worse, it destroyed the empty grid. The empty wells are drawn at a few percent white, which was survivable on the old slate board and *invisible* on a black one — and an empty grid you cannot see is not a cosmetic problem, it is the game becoming unplayable. Wells are now filled **and** outlined so every empty cell has a definite edge to aim at.
+>
+> Loud is a matter of contrast, motion and sound. It is not a matter of turning every channel to 255.
 
 **Type:** a characterful grotesque for display and run text (Bricolage Grotesque or Familjen Grotesk), plus a UI face with **tabular figures** for the score — non-tabular digits jitter horribly while a counter rolls, and it's the kind of detail people feel without being able to name.
 
-**Signature element:** the score isn't a number in a corner. It's an engraved brass plate below the board where digits roll like a mechanical odometer, and the current run lights up as filled enamel dots along the bezel. One memorable thing; everything else stays quiet.
+**Signature element:** the score isn't a number in a corner. It's an engraved plate in a gold bezel below the board where digits roll like a mechanical odometer — and spin like a reel when the jackpot lands. The board is ringed by what you're accumulating: the run as lit dots along the top bezel, the jackpot meter as a filling gold bar along the bottom.
 
 ---
 
